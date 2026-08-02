@@ -987,8 +987,8 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--window-mode=<windowed|borderless|exclusive>] [--resolution=<WIDTHxHEIGHT>] [--display=<N>] [--refresh-rate=<HZ>] [--scaling=<fit|cover|stretch|integer>] [--vsync=<on|off>] [--hdr=<auto|on|off>] [--debug-server[=host:port]] <path-to-eboot.bin>");
-        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native|interpreter>] [--cpu-interpreter-trace[=true|false]] [--cpu-interpreter-max-instructions=<N>] [--log-level=<level>] [--log-file[=<path>]] [--window-mode=<windowed|borderless|exclusive>] [--resolution=<WIDTHxHEIGHT>] [--display=<N>] [--refresh-rate=<HZ>] [--scaling=<fit|cover|stretch|integer>] [--vsync=<on|off>] [--hdr=<auto|on|off>] [--start-minimized] [--debug-server[=host:port]] <path-to-eboot.bin>");
+        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=interpreter --cpu-interpreter-trace=true --cpu-interpreter-max-instructions=100000 --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
         Log.Info("Debug server: --debug-server starts a live debug listener (default 127.0.0.1:5714); connect with SharpEmu.DebugClient.");
     }
 
@@ -1049,6 +1049,8 @@ internal static partial class Program
         var strictDynlibResolution = false;
         var importTraceLimit = 0;
         var cpuEngine = CpuExecutionEngine.NativeOnly;
+        var interpreterTrace = false;
+        var interpreterMaxInstructions = 0;
         HostWindowMode? windowModeOverride = null;
         HostScalingMode? scalingModeOverride = null;
         int? windowWidthOverride = null;
@@ -1057,6 +1059,7 @@ internal static partial class Program
         int? refreshRateOverride = null;
         bool? vsyncOverride = null;
         HostHdrMode? hdrModeOverride = null;
+        bool? startMinimizedOverride = null;
         videoOptions = HostVideoOptions.Default;
         logFilePath = null;
         logLevel = SharpEmuLog.MinimumLevel;
@@ -1147,6 +1150,11 @@ internal static partial class Program
                 strictDynlibResolution = true;
                 continue;
             }
+            if (string.Equals(argument, "--start-minimized", StringComparison.OrdinalIgnoreCase))
+            {
+                startMinimizedOverride = true;
+                continue;
+            }
 
             // The debug-server endpoint is parsed separately (see
             // TryGetDebugServerOptions); accept the flag here so it is not
@@ -1197,6 +1205,40 @@ internal static partial class Program
                 continue;
             }
 
+            if (string.Equals(argument, "--cpu-interpreter-trace", StringComparison.OrdinalIgnoreCase))
+            {
+                interpreterTrace = true;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    if (!TryParseSwitch(args[i + 1], out interpreterTrace))
+                    {
+                        ebootPath = string.Empty;
+                        runtimeOptions = default;
+                        logFilePath = null;
+                        return false;
+                    }
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(argument, "--cpu-interpreter-max-instructions", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length ||
+                    !int.TryParse(args[i + 1], out interpreterMaxInstructions) ||
+                    interpreterMaxInstructions < 0)
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logFilePath = null;
+                    return false;
+                }
+
+                i++;
+                continue;
+            }
+
             if (string.Equals(argument, "--log-file", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 < args.Length &&
@@ -1233,6 +1275,37 @@ internal static partial class Program
             {
                 var valueText = argument[cpuEnginePrefix.Length..];
                 if (!TryParseCpuEngine(valueText, out cpuEngine))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                continue;
+            }
+
+            const string interpreterTracePrefix = "--cpu-interpreter-trace=";
+            if (argument.StartsWith(interpreterTracePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryParseSwitch(argument[interpreterTracePrefix.Length..], out interpreterTrace))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                continue;
+            }
+
+            const string interpreterMaxPrefix = "--cpu-interpreter-max-instructions=";
+            if (argument.StartsWith(interpreterMaxPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(argument[interpreterMaxPrefix.Length..], out interpreterMaxInstructions) ||
+                    interpreterMaxInstructions < 0)
                 {
                     ebootPath = string.Empty;
                     runtimeOptions = default;
@@ -1300,6 +1373,8 @@ internal static partial class Program
         runtimeOptions = new SharpEmuRuntimeOptions
         {
             CpuEngine = cpuEngine,
+            InterpreterTrace = interpreterTrace,
+            InterpreterMaxInstructions = interpreterMaxInstructions,
             StrictDynlibResolution = strictDynlibResolution,
             ImportTraceLimit = importTraceLimit,
         };
@@ -1314,6 +1389,7 @@ internal static partial class Program
             RefreshRate = refreshRateOverride ?? configuredVideoOptions.RefreshRate,
             VSync = vsyncOverride ?? configuredVideoOptions.VSync,
             HdrMode = hdrModeOverride ?? configuredVideoOptions.HdrMode,
+            StartMinimized = startMinimizedOverride ?? configuredVideoOptions.StartMinimized,
         }).Normalize();
         return true;
     }
@@ -1447,9 +1523,16 @@ internal static partial class Program
     private static bool TryParseCpuEngine(string valueText, out CpuExecutionEngine engine)
     {
         if (string.Equals(valueText, "native", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(valueText, "native-only", StringComparison.OrdinalIgnoreCase))
+            string.Equals(valueText, "native-only", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(valueText, "native-x64", StringComparison.OrdinalIgnoreCase))
         {
             engine = CpuExecutionEngine.NativeOnly;
+            return true;
+        }
+        if (string.Equals(valueText, "interpreter", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(valueText, "x64-interpreter", StringComparison.OrdinalIgnoreCase))
+        {
+            engine = CpuExecutionEngine.Interpreter;
             return true;
         }
 

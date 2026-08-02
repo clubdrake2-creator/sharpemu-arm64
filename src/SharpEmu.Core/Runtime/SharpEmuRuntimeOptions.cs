@@ -10,6 +10,10 @@ public readonly struct SharpEmuRuntimeOptions
 {
     public CpuExecutionEngine CpuEngine { get; init; }
 
+    public bool InterpreterTrace { get; init; }
+
+    public int InterpreterMaxInstructions { get; init; }
+
     public bool StrictDynlibResolution { get; init; }
 
     public int ImportTraceLimit { get; init; }

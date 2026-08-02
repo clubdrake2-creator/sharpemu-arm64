@@ -6,4 +6,6 @@ namespace SharpEmu.Core.Cpu;
 public enum CpuExecutionEngine
 {
     NativeOnly = 0,
+
+    Interpreter = 1,
 }

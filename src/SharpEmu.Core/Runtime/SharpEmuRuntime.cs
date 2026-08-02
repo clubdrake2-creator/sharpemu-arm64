@@ -66,6 +66,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         _cpuExecutionOptions = new CpuExecutionOptions
         {
             CpuEngine = cpuExecutionOptions.CpuEngine,
+            InterpreterTrace = cpuExecutionOptions.InterpreterTrace,
+            InterpreterMaxInstructions = cpuExecutionOptions.InterpreterMaxInstructions,
             StrictDynlibResolution = cpuExecutionOptions.StrictDynlibResolution,
             ImportTraceLimit = Math.Max(0, cpuExecutionOptions.ImportTraceLimit),
             DebugHook = cpuExecutionOptions.DebugHook,
@@ -78,6 +80,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var cpuExecutionOptions = new CpuExecutionOptions
         {
             CpuEngine = options.CpuEngine,
+            InterpreterTrace = options.InterpreterTrace,
+            InterpreterMaxInstructions = options.InterpreterMaxInstructions,
             StrictDynlibResolution = options.StrictDynlibResolution,
             ImportTraceLimit = Math.Max(0, options.ImportTraceLimit),
             DebugHook = options.DebugHook,
@@ -159,7 +163,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         HleDataSymbols.ConfigureProcessImageName(processImageName);
-        MergeKnownHleDataSymbols(activeRuntimeSymbols);
+        if (_cpuExecutionOptions.CpuEngine != CpuExecutionEngine.Interpreter ||
+            !TryMergeKnownGuestHleDataSymbols(activeRuntimeSymbols, processImageName))
+        {
+            MergeKnownHleDataSymbols(activeRuntimeSymbols);
+        }
         var loadedModuleImages = LoadAdjacentSceModules(ebootPath, activeImportStubs, activeRuntimeSymbols);
         RebindImportedDataSymbols(image, loadedModuleImages, activeRuntimeSymbols);
         var initializerResult = RunAllInitializers(
@@ -176,6 +184,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
             LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
             LastBasicBlockTrace = _cpuDispatcher.LastBasicBlockTrace;
+            LastExecutionDiagnostics = BuildInitializerFailureDiagnostics(failedInitializerResult, activeImportStubs);
             return failedInitializerResult;
         }
 
@@ -405,6 +414,49 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         // miss mid-boot does not stall on a cold USB index.
         SharpEmu.Libs.Ampr.AmprFileRegistry.BeginApp0IndexPreload(app0Root);
         return new App0BindingScope(app0VariableName);
+    }
+
+    private string? BuildInitializerFailureDiagnostics(
+        OrbisGen2Result result,
+        IReadOnlyDictionary<ulong, string> activeImportStubs)
+    {
+        if (result == OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT &&
+            _cpuDispatcher.LastMemoryFaultInfo is { } faultInfo)
+        {
+            var opcodeText = faultInfo.Opcode.HasValue ? $"0x{faultInfo.Opcode.Value:X2}" : "??";
+            var decodedFaultText = TryDecodeInstructionAt(faultInfo.InstructionPointer, out var faultInstruction)
+                ? BuildDecodedInstructionFields(in faultInstruction)
+                : string.Empty;
+            if (!faultInfo.Opcode.HasValue && faultInstruction.Bytes.Length > 0)
+            {
+                opcodeText = $"0x{faultInstruction.Bytes[0]:X2}";
+            }
+
+            var accessType = faultInfo.Access.IsWrite ? "write" : "read";
+            var ripStubText = activeImportStubs.TryGetValue(faultInfo.InstructionPointer, out var faultStubNid)
+                ? $", rip_stub={faultStubNid}"
+                : string.Empty;
+            return
+                $"Initializer memory fault at RIP=0x{faultInfo.InstructionPointer:X16}, opcode={opcodeText}{decodedFaultText}, {accessType}@0x{faultInfo.Access.Address:X16} size={faultInfo.Access.Size}, import_stubs={activeImportStubs.Count}{ripStubText}";
+        }
+
+        if (result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED &&
+            _cpuDispatcher.LastNotImplementedInfo is { } notImplementedInfo)
+        {
+            var decodedText = TryDecodeInstructionAt(notImplementedInfo.InstructionPointer, out var instruction)
+                ? BuildDecodedInstructionFields(in instruction)
+                : string.Empty;
+            var ripStubText = activeImportStubs.TryGetValue(notImplementedInfo.InstructionPointer, out var stubNid)
+                ? $", rip_stub={stubNid}"
+                : string.Empty;
+            var detailText = string.IsNullOrWhiteSpace(notImplementedInfo.Detail)
+                ? string.Empty
+                : $", detail={notImplementedInfo.Detail}";
+            return
+                $"Initializer not implemented: source={notImplementedInfo.Source}, rip=0x{notImplementedInfo.InstructionPointer:X16}{decodedText}, export={notImplementedInfo.ExportName}, library={notImplementedInfo.LibraryName}, import_stubs={activeImportStubs.Count}{ripStubText}{detailText}";
+        }
+
+        return null;
     }
 
     private sealed class App0BindingScope(string variableName) : IDisposable
@@ -864,6 +916,73 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
             runtimeSymbols[nid] = symbolAddress;
         }
+    }
+
+    private bool TryMergeKnownGuestHleDataSymbols(
+        IDictionary<string, ulong> runtimeSymbols,
+        string processImageName)
+    {
+        if (_virtualMemory is not IGuestMemoryAllocator allocator)
+        {
+            return false;
+        }
+
+        Span<byte> stackGuard = stackalloc byte[sizeof(ulong) * 2];
+        BinaryPrimitives.WriteUInt64LittleEndian(stackGuard, HleDataSymbols.StackChkGuardValue);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            stackGuard[sizeof(ulong)..],
+            HleDataSymbols.StackChkGuardValue);
+        if (!TryAllocateGuestDataSymbol(allocator, stackGuard, sizeof(ulong), out var stackGuardAddress))
+        {
+            return false;
+        }
+
+        Span<byte> needFlag = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(needFlag, 1);
+        if (!TryAllocateGuestDataSymbol(allocator, needFlag, sizeof(uint), out var libcNeedFlagAddress) ||
+            !TryAllocateGuestDataSymbol(allocator, needFlag, sizeof(uint), out var libcInternalNeedFlagAddress))
+        {
+            return false;
+        }
+
+        var progNameBytes = new byte[HleDataSymbols.ProgNameMaxBytes + 1];
+        var effectiveName = string.IsNullOrWhiteSpace(processImageName)
+            ? "eboot.bin"
+            : processImageName;
+        var encodedName = Encoding.UTF8.GetBytes(effectiveName);
+        encodedName.AsSpan(0, Math.Min(encodedName.Length, HleDataSymbols.ProgNameMaxBytes))
+            .CopyTo(progNameBytes);
+        if (!TryAllocateGuestDataSymbol(allocator, progNameBytes, 0x10, out var progNameBufferAddress))
+        {
+            return false;
+        }
+
+        Span<byte> progNamePointer = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(progNamePointer, progNameBufferAddress);
+        if (!TryAllocateGuestDataSymbol(allocator, progNamePointer, sizeof(ulong), out var progNamePointerAddress))
+        {
+            return false;
+        }
+
+        runtimeSymbols[HleDataSymbols.StackChkGuardNid] = stackGuardAddress;
+        runtimeSymbols[HleDataSymbols.ProgNameNid] = progNamePointerAddress;
+        runtimeSymbols[HleDataSymbols.LibcNeedFlagNid] = libcNeedFlagAddress;
+        runtimeSymbols[HleDataSymbols.LibcInternalNeedFlagNid] = libcInternalNeedFlagAddress;
+        Console.Error.WriteLine(
+            $"[RUNTIME] HLE data symbols materialized in guest memory for x64 interpreter: " +
+            $"progname=0x{progNamePointerAddress:X16}->0x{progNameBufferAddress:X16}");
+        return true;
+    }
+
+    private bool TryAllocateGuestDataSymbol(
+        IGuestMemoryAllocator allocator,
+        ReadOnlySpan<byte> data,
+        ulong alignment,
+        out ulong address)
+    {
+        address = 0;
+        return allocator.TryAllocateGuestMemory((ulong)data.Length, alignment, out address) &&
+            _virtualMemory.TryWrite(address, data);
     }
 
     private static int MergeImportStubs(

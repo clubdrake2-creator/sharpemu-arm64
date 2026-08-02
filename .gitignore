@@ -30,6 +30,7 @@ arm64/
 packages/
 *.nupkg
 .nuget/
+.dotnet/
 .dotnet-home/
 .cache/
 __pycache__/

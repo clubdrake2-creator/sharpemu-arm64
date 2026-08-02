@@ -81,7 +81,15 @@ internal sealed unsafe class SdlHostWindow : IDisposable, IHostGamepadOutput
         ApplyConfiguredMode(_options.WindowMode);
         SetIcon();
         SDL_ShowWindow(_window);
-        SDL_RaiseWindow(_window);
+        if (_options.StartMinimized)
+        {
+            SDL_MinimizeWindow(_window);
+        }
+        else
+        {
+            SDL_RaiseWindow(_window);
+        }
+
         if (_fullscreen && !SDL_SyncWindow(_window))
         {
             Console.Error.WriteLine($"[LOADER][WARN] SDL initial fullscreen sync failed: {GetError()}");

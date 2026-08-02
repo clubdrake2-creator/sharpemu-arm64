@@ -8,14 +8,14 @@ namespace SharpEmu.HLE;
 
 public static class HleDataSymbols
 {
-    private const string StackChkGuardNid = "f7uOxY9mM1U";
-    private const string ProgNameNid = "djxxOmW6-aw";
-    private const string LibcNeedFlagNid = "P330P3dFF68";
-    private const string LibcInternalNeedFlagNid = "ZT4ODD2Ts9o";
-    private const int ProgNameMaxBytes = 511;
+    public const string StackChkGuardNid = "f7uOxY9mM1U";
+    public const string ProgNameNid = "djxxOmW6-aw";
+    public const string LibcNeedFlagNid = "P330P3dFF68";
+    public const string LibcInternalNeedFlagNid = "ZT4ODD2Ts9o";
+    public const int ProgNameMaxBytes = 511;
     // Terminator canaries reserve the low byte as NUL. Keep the process data
     // symbol and every per-thread TLS copy byte-for-byte identical.
-    private const ulong StackChkGuardValue = 0xC0DEC0DECAFEBA00UL;
+    public const ulong StackChkGuardValue = 0xC0DEC0DECAFEBA00UL;
 
     private static readonly object _gate = new();
     private static readonly nint _stackChkGuardAddress = Allocate(sizeof(ulong) * 2);

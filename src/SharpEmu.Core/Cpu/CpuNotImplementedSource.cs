@@ -14,4 +14,6 @@ public enum CpuNotImplementedSource
     HleExport = 3,
 
     NativeBackend = 4,
+
+    Interpreter = 5,
 }

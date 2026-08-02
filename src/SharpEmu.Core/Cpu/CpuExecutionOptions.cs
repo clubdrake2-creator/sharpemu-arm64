@@ -11,6 +11,19 @@ public readonly struct CpuExecutionOptions
 
     public CpuExecutionEngine CpuEngine { get; init; }
 
+    public bool InterpreterTrace { get; init; }
+
+    /// <summary>
+    /// Instruction budget for the interpreter backend. 0 (the default, and
+    /// what an unset <c>--cpu-interpreter-max-instructions</c> resolves to)
+    /// means unlimited — matching real hardware and reference interpreters
+    /// (e.g. shadPS4), which run until the guest program stops itself
+    /// rather than an artificial host-imposed cap.
+    /// </summary>
+    public int InterpreterMaxInstructions { get; init; }
+
+    public int EffectiveInterpreterMaxInstructions => InterpreterMaxInstructions;
+
     public bool StrictDynlibResolution { get; init; }
 
     public int ImportTraceLimit { get; init; }

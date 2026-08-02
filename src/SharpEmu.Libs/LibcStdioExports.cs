@@ -716,6 +716,27 @@ public static class LibcStdioExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    // Not in ps5_names.txt (no catalogued symbol name), so this NID is unconfirmed
+    // by name — but the caller's access pattern is unmistakably the same ctype
+    // dereference idiom _Getpctype serves: an isupper/isalpha/isdigit/... check
+    // walks a string byte-by-byte, sign-tests each byte (the classic guard for
+    // the [-128, 255] domain _Getpctype's table supports), calls this function,
+    // then reads one byte from [returned_table + charCode*2] (the low byte of a
+    // Dinkumware ushort flag entry, since every ASCII-range flag in
+    // ComputeCtypeFlags fits under 0x80). Left unmapped, this NID's "not found"
+    // fallback puts an ORBIS_GEN2_ERROR_NOT_FOUND error code in RAX, which the
+    // caller (never checking for failure, because on real hardware this call
+    // cannot fail) then dereferences as a table pointer and crashes on the very
+    // next instruction — the wrong function id, e.g. _Getptolower/_Getptoupper's,
+    // would misclassify characters rather than crash outright, so this mapping
+    // was chosen as the safer of the two failure modes if it later proves wrong.
+    [SysAbiExport(
+        Nid = "1uJgoVq3bQU",
+        ExportName = "_Getpctype_unconfirmed",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int GetPctypeUnconfirmedAlias(CpuContext ctx) => GetPctype(ctx);
+
     private static unsafe nint EnsureCtypeTable()
     {
         lock (_ctypeTableGate)

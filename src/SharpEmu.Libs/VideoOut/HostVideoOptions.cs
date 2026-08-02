@@ -47,6 +47,8 @@ public sealed record HostVideoOptions
 
     public HostHdrMode HdrMode { get; init; } = HostHdrMode.Auto;
 
+    public bool StartMinimized { get; init; }
+
     public HostVideoOptions Normalize() => this with
     {
         Width = Math.Clamp(Width, 640, 16384),

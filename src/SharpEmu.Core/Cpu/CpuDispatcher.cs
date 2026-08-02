@@ -3,7 +3,9 @@
 
 using System.Buffers.Binary;
 using System.Text;
+using System.Threading;
 using SharpEmu.Core.Cpu.Debugging;
+using SharpEmu.Core.Cpu.Interpreter;
 using SharpEmu.Core.Cpu.Native;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
@@ -24,7 +26,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     // cache / vdso and (under Rosetta 2) the translator runtime, so POSIX
     // hosts use the equivalent layout one slot lower at 0x6FFx.
     private static readonly ulong StackBaseAddress = OperatingSystem.IsWindows() ? 0x7FFF_F000_0000UL : 0x6FFF_F000_0000UL;
-    private const ulong StackSize = 0x0020_0000UL;
+    internal const ulong StackSize = 0x0020_0000UL;
     private static readonly ulong TlsBaseAddress = OperatingSystem.IsWindows() ? 0x7FFE_0000_0000UL : 0x6FFE_0000_0000UL;
     private const ulong TlsSize = 0x0001_0000UL;
     // The static TLS blocks live at negative offsets from the TCB (FreeBSD
@@ -47,6 +49,15 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     private readonly IVirtualMemory _virtualMemory;
     private readonly IModuleManager _moduleManager;
     private INativeCpuBackend? _nativeCpuBackend;
+    // PhysicalVirtualMemory.Map() does not throw when re-mapping an address
+    // that is already in use — it silently re-applies protection and
+    // zero-fills the region, which would corrupt a live thread's stack if a
+    // second thread's stack/TLS region were ever mapped onto the same slot.
+    // These counters guarantee each call claims a slot no earlier call (from
+    // any thread) has already used, regardless of the exception-based retry
+    // below (kept for genuine host-level allocation failures).
+    private int _nextStackSlot = -1;
+    private int _nextTlsSlot = -1;
 
     public CpuDispatcher(
         IVirtualMemory virtualMemory,
@@ -251,6 +262,53 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             sentinelValue: returnToHostStubAddress,
             entryParamsConfigured: entryParamsConfigured);
 
+        if (executionOptions.CpuEngine == CpuExecutionEngine.Interpreter)
+        {
+            LastMilestoneLog = string.Concat(
+                entryFrameDiagnostic,
+                Environment.NewLine,
+                $"CpuEngine: x64-interpreter trace={executionOptions.InterpreterTrace} max_instructions={executionOptions.EffectiveInterpreterMaxInstructions}");
+
+            var interpreterOptions = new X64InterpreterOptions
+            {
+                Trace = executionOptions.InterpreterTrace,
+                MaxInstructions = executionOptions.EffectiveInterpreterMaxInstructions,
+            };
+            var interpreterScheduler = new X64InterpreterGuestThreadScheduler(
+                this,
+                _moduleManager,
+                effectiveImportStubs,
+                interpreterOptions);
+            var previousGuestThreadScheduler = GuestThreadExecution.Scheduler;
+            GuestThreadExecution.Scheduler = interpreterScheduler;
+            X64InterpreterResult interpreterResult;
+            try
+            {
+                var interpreter = new X64InterpreterBackend(_moduleManager, interpreterScheduler);
+                interpreterResult = interpreter.Execute(context, entryPoint, effectiveImportStubs, interpreterOptions);
+            }
+            finally
+            {
+                GuestThreadExecution.Scheduler = previousGuestThreadScheduler;
+            }
+
+            LastTrapInfo = interpreterResult.TrapInfo;
+            LastMemoryFaultInfo = interpreterResult.MemoryFaultInfo;
+            LastNotImplementedInfo = interpreterResult.NotImplementedInfo;
+            LastBasicBlockTrace = interpreterResult.Trace;
+            LastRecentInstructionWindow = interpreterResult.RecentInstructions;
+            LastSessionSummary = new CpuSessionSummary(
+                interpreterResult.Result,
+                interpreterResult.Reason,
+                exitCode: null,
+                lastGuestRip: interpreterResult.LastGuestRip,
+                lastStubRip: 0,
+                totalInstructions: interpreterResult.TotalInstructions,
+                importsHit: interpreterResult.ImportsHit,
+                uniqueNidsHit: interpreterResult.UniqueNidsHit);
+            return interpreterResult.Result;
+        }
+
         if (executionOptions.CpuEngine != CpuExecutionEngine.NativeOnly)
         {
             LastMilestoneLog = string.Concat(
@@ -339,11 +397,17 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             CpuExitReason.NativeBackendUnavailable);
     }
 
-    private ulong TryMapStackRegion()
+    internal ulong TryMapStackRegion()
     {
         const ulong stackStride = 0x0100_0000UL;
-        for (var i = 0; i < 32; i++)
+        for (var attempt = 0; attempt < 32; attempt++)
         {
+            var i = Interlocked.Increment(ref _nextStackSlot);
+            if (i >= 32)
+            {
+                return 0;
+            }
+
             var candidateBase = StackBaseAddress - ((ulong)i * stackStride);
             try
             {
@@ -364,11 +428,17 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         return 0;
     }
 
-    private ulong TryMapTlsRegion()
+    internal ulong TryMapTlsRegion()
     {
         const ulong tlsStride = 0x0100_0000UL;
-        for (var i = 0; i < 32; i++)
+        for (var attempt = 0; attempt < 32; attempt++)
         {
+            var i = Interlocked.Increment(ref _nextTlsSlot);
+            if (i >= 32)
+            {
+                return 0;
+            }
+
             var candidateBase = TlsBaseAddress - ((ulong)i * tlsStride);
             var mappedBase = candidateBase - TlsPrefixSize;
             try
@@ -390,7 +460,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         return 0;
     }
 
-    private static bool InitializeTls(CpuContext context, ulong tlsBase)
+    internal static bool InitializeTls(CpuContext context, ulong tlsBase)
     {
         if (!context.TryWriteUInt64(tlsBase - 0xF0, 0) ||
             !context.TryWriteUInt64(tlsBase + 0x00, tlsBase) ||
@@ -407,7 +477,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         return true;
     }
 
-    private static bool InitializeGuestFrameChainSentinel(CpuContext context)
+    internal static bool InitializeGuestFrameChainSentinel(CpuContext context)
     {
         var stackTop = context[CpuRegister.Rsp] + sizeof(ulong);
         var sentinelFrame = AlignDown(stackTop - 0x20, 16);

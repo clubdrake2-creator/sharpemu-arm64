@@ -6697,6 +6697,20 @@ public static partial class KernelMemoryCompatExports
         return highWaterMark;
     }
 
+    /// <summary>
+    /// Reads directly from a raw host pointer (e.g. one handed to guest code by
+    /// <c>malloc</c>/<c>calloc</c>, which are backed by real host allocations rather than
+    /// the guest-mapped address space). Used by CPU backends that need to resolve an
+    /// address the guest memory map does not recognize but that is nonetheless a valid,
+    /// committed host page.
+    /// </summary>
+    public static unsafe bool TryReadRawHostMemory(ulong address, Span<byte> destination) =>
+        TryReadHostMemory(address, destination);
+
+    /// <summary>See <see cref="TryReadRawHostMemory"/>.</summary>
+    public static unsafe bool TryWriteRawHostMemory(ulong address, ReadOnlySpan<byte> source) =>
+        TryWriteHostMemory(address, source);
+
     private static unsafe bool TryReadHostMemory(ulong address, Span<byte> destination)
     {
         if (destination.IsEmpty || !IsHostRangeAccessible(address, (ulong)destination.Length, writeAccess: false))

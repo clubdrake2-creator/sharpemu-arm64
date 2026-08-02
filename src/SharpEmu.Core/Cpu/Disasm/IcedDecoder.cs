@@ -64,35 +64,57 @@ public static class IcedDecoder
     {
         ArgumentNullException.ThrowIfNull(memory);
         var clampedLength = Math.Clamp(maxLen, 1, MaxInstructionBytes);
+
+        // A single batched read covers the common case (the whole prefix is
+        // mapped) in one call to the underlying memory subsystem instead of
+        // one call per byte — this runs on every decoded instruction, so the
+        // per-call region-lookup/locking overhead previously multiplied by
+        // up to MaxInstructionBytes on every single instruction executed.
         var buffer = new byte[clampedLength];
-        Span<byte> oneByte = stackalloc byte[1];
-        var readCount = 0;
-        for (var i = 0; i < clampedLength; i++)
+        for (var length = clampedLength; length > 0; length--)
         {
-            if (!memory.TryRead(rip + (ulong)i, oneByte))
+            if (!memory.TryRead(rip, buffer.AsSpan(0, length)))
             {
-                break;
+                continue;
             }
 
-            buffer[readCount] = oneByte[0];
-            readCount++;
-        }
+            if (length == clampedLength)
+            {
+                bytes = buffer;
+                return true;
+            }
 
-        if (readCount == 0)
-        {
-            bytes = Array.Empty<byte>();
-            return false;
-        }
-
-        if (readCount == clampedLength)
-        {
-            bytes = buffer;
+            bytes = new byte[length];
+            Array.Copy(buffer, bytes, length);
             return true;
         }
 
-        bytes = new byte[readCount];
-        Array.Copy(buffer, bytes, readCount);
-        return true;
+        bytes = Array.Empty<byte>();
+        return false;
+    }
+
+    /// <summary>
+    /// Allocation-free variant of <see cref="TryReadGuestBytes(ICpuMemory, ulong, int, out byte[])"/>
+    /// for the decode-cache hot path: a decode-cache <em>hit</em> only needs the fresh bytes
+    /// transiently, to validate the cache entry still matches (self-modifying-code guard) — it never
+    /// needs to keep them. Reading into a caller-owned (typically stack-allocated) span instead of a
+    /// freshly heap-allocated array turns "one small array allocation per instruction executed" (the
+    /// common case in any hot loop) into zero allocations on every cache hit.
+    /// </summary>
+    public static bool TryReadGuestBytes(ICpuMemory memory, ulong rip, int maxLen, Span<byte> destination, out int length)
+    {
+        ArgumentNullException.ThrowIfNull(memory);
+        var clampedLength = Math.Min(Math.Clamp(maxLen, 1, MaxInstructionBytes), destination.Length);
+
+        for (length = clampedLength; length > 0; length--)
+        {
+            if (memory.TryRead(rip, destination[..length]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static bool TryReadGuestBytes(IVirtualMemory memory, ulong rip, int maxLen, out byte[] bytes)
