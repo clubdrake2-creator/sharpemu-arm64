@@ -18,7 +18,15 @@ public sealed class X64InterpreterBackend
     private const int MaxInstructionBytes = 15;
     private readonly IModuleManager _moduleManager;
     private readonly X64InterpreterGuestThreadScheduler? _blockRegistry;
-    private readonly Queue<(Instruction Instruction, byte[] Bytes)> _recentInstructions = new();
+    // Ring buffer instead of Queue<T>: PushRecent runs unconditionally on every single instruction
+    // executed (the crash-diagnostics payoff — "what ran right before this fault" — is only ever read
+    // on the rare failure path), so its steady-state cost is Queue<T>'s Enqueue/Dequeue bookkeeping
+    // paid millions of times for a benefit realized maybe once. A fixed-size array + wrapping index is
+    // the same FIFO-of-last-256-entries behavior (FormatRecentInstructions below preserves the exact
+    // oldest-to-newest ordering Queue<T>'s enumerator produced) at a fraction of the per-instruction cost.
+    private readonly (Instruction Instruction, byte[] Bytes)[] _recentInstructions = new (Instruction, byte[])[RecentInstructionCapacity];
+    private int _recentInstructionHead;
+    private int _recentInstructionCount;
 
     // Decoded-instruction cache keyed by guest address. Decoding x86-64 with
     // Iced is by far the most expensive part of the per-instruction loop, so
@@ -57,6 +65,16 @@ public sealed class X64InterpreterBackend
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(importStubs);
 
+        // CpuDispatcher's caller always builds effectiveImportStubs as a concrete Dictionary<ulong,
+        // string> before this call, but the parameter above stays IReadOnlyDictionary for interface
+        // stability (INativeCpuBackend/DirectExecutionBackend share the same shape). Every single
+        // executed instruction probes this map once (the "did RIP just land on an import stub" check
+        // below), so resolving the concrete type once here — rather than going through the interface
+        // vtable millions of times — lets the JIT call/inline Dictionary<TKey,TValue>.TryGetValue
+        // directly. This matters more on Android's Mono JIT, which (unlike desktop RyuJIT's PGO-driven
+        // speculative devirtualization) won't do this on its own.
+        var concreteImportStubs = importStubs as Dictionary<ulong, string>;
+
         context.Rip = entryPoint;
         var importsHit = 0;
         var uniqueImports = new HashSet<string>(StringComparer.Ordinal);
@@ -90,13 +108,27 @@ public sealed class X64InterpreterBackend
                     trace);
             }
 
-            if (importStubs.TryGetValue(context.Rip, out var nid))
+            string? nid;
+            bool isImportStub;
+            if (concreteImportStubs is not null)
             {
+                isImportStub = concreteImportStubs.TryGetValue(context.Rip, out nid);
+            }
+            else
+            {
+                isImportStub = importStubs.TryGetValue(context.Rip, out nid);
+            }
+
+            if (isImportStub)
+            {
+                // TryGetValue returning true guarantees nid is non-null; the compiler can't see that
+                // across the manual if/else branches above (it can for the direct out-var pattern this
+                // replaced), hence the forgiveness operator here rather than a real nullability gap.
                 importsHit++;
-                uniqueImports.Add(nid);
+                uniqueImports.Add(nid!);
                 trace?.AppendLine($"[CPU-INTERP][IMPORT] rip=0x{context.Rip:X16} nid={nid}");
 
-                _ = _moduleManager.Dispatch(nid, context);
+                _ = _moduleManager.Dispatch(nid!, context);
 
                 if (GuestThreadExecution.TryConsumeCurrentEntryExit(out var exitValue, out var exitReason))
                 {
@@ -4233,20 +4265,39 @@ public sealed class X64InterpreterBackend
             memoryFaultInfo,
             notImplementedInfo,
             trace?.ToString(),
-            string.Join(
-                Environment.NewLine,
-                _recentInstructions.Select(entry => FormatInstruction(entry.Instruction, entry.Bytes))));
+            FormatRecentInstructions());
+    }
+
+    private string FormatRecentInstructions()
+    {
+        if (_recentInstructionCount == 0)
+        {
+            return string.Empty;
+        }
+
+        // When the buffer hasn't wrapped yet, the oldest entry is at index 0; once full, it's
+        // whatever PushRecent is about to overwrite next (_recentInstructionHead).
+        var startIndex = _recentInstructionCount < RecentInstructionCapacity ? 0 : _recentInstructionHead;
+        var lines = new string[_recentInstructionCount];
+        for (var i = 0; i < _recentInstructionCount; i++)
+        {
+            var entry = _recentInstructions[(startIndex + i) & (RecentInstructionCapacity - 1)];
+            lines[i] = FormatInstruction(entry.Instruction, entry.Bytes);
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private const int RecentInstructionCapacity = 256;
 
     private void PushRecent(in Instruction instruction, byte[] bytes)
     {
-        if (_recentInstructions.Count == RecentInstructionCapacity)
+        _recentInstructions[_recentInstructionHead] = (instruction, bytes);
+        _recentInstructionHead = (_recentInstructionHead + 1) & (RecentInstructionCapacity - 1);
+        if (_recentInstructionCount < RecentInstructionCapacity)
         {
-            _recentInstructions.Dequeue();
+            _recentInstructionCount++;
         }
-        _recentInstructions.Enqueue((instruction, bytes));
     }
 
     private static string FormatInstruction(in Instruction instruction, ReadOnlySpan<byte> bytes)

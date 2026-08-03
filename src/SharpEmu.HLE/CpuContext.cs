@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace SharpEmu.HLE;
@@ -41,9 +42,15 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
     /// <summary>MXCSR observed at the current guest boundary.</summary>
     public uint Mxcsr { get; set; } = 0x1F80;
 
+    // The single hottest access in the whole interpreter — every operand fetch/store for every
+    // executed instruction goes through this indexer. AggressiveInlining matters more here than on
+    // desktop RyuJIT: Mono's JIT (the Android execution path, see SharpEmu.Android.csproj's
+    // RunAOTCompilation=false comment) is considerably less likely to inline this on its own.
     public ulong this[CpuRegister register]
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _registers[(int)register];
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         set
         {
             _registers[(int)register] = value;
@@ -226,6 +233,7 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         return Memory.TryWrite(address, buffer);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryReadUInt64(ulong address, out ulong value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(ulong)];
@@ -239,6 +247,7 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryWriteUInt64(ulong address, ulong value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(ulong)];
@@ -313,6 +322,7 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PushUInt64(ulong value)
     {
         var rsp = this[CpuRegister.Rsp];
@@ -321,6 +331,7 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         return TryWriteUInt64(rsp, value);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PopUInt64(out ulong value)
     {
         var rsp = this[CpuRegister.Rsp];
