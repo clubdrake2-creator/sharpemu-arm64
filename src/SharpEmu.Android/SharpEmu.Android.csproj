@@ -23,12 +23,22 @@
          disabled together here for that reason. -->
     <PublishTrimmed>false</PublishTrimmed>
     <RunAOTCompilation>false</RunAOTCompilation>
+    <!-- Marshal Methods (default on for Release) generates native-to-managed JNI trampolines
+         ("n_Xxx_mm_wrapper") ahead of time instead of registering methods dynamically. Confirmed by
+         two separate on-device failures: (1) UnsatisfiedLinkError for a completely unrelated class's
+         n_onCreate right after incremental (non-clean) rebuilds — a marshal-methods codegen staleness
+         bug; (2) SDLActivity.n_Main_mm_wrapper's exception marshaling itself threw
+         MethodAccessException on AndroidEnvironmentInternal.UnhandledException when Main() faulted,
+         masking the real exception. Disabling it falls back to normal JNI RegisterNatives, which
+         doesn't have either problem. -->
+    <AndroidEnableMarshalMethods>false</AndroidEnableMarshalMethods>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Plain net10.0 class libraries, referenced directly — no interop layer needed here, this is
-         ordinary managed code calling managed code. See docs/android-port notes for why this is the
-         one part of the port that needed no adaptation at all. -->
+         ordinary managed code calling managed code (the one part of this port needing no
+         Android-specific adaptation at all — see Fase 1's OperatingSystem.IsAndroid() guards inside
+         these projects for the platform-specific edges they do have). -->
     <ProjectReference Include="..\SharpEmu.Core\SharpEmu.Core.csproj" />
     <ProjectReference Include="..\SharpEmu.HLE\SharpEmu.HLE.csproj" />
     <ProjectReference Include="..\SharpEmu.Libs\SharpEmu.Libs.csproj" />
@@ -41,5 +51,30 @@
          bindings for its public types, including the EmulatorBridge interface this project
          implements (EmulatorBridgeImpl.cs) and hands to the library via EmulatorBridgeHolder. -->
     <AndroidLibrary Include="..\..\platform\android\app\build\outputs\aar\app-release.aar" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AndroidLibrary (above) embeds the .aar's own classes/resources, but — unlike a real Gradle
+         module reference — does NOT resolve its Maven dependency graph (androidx.core, Compose,
+         etc.), since a raw local .aar file carries no POM for that. platform/android/app's
+         build.gradle.kts declares these as plain Gradle `implementation(...)` deps, which Gradle
+         itself resolves transitively when building the .aar standalone — but the merged app built
+         here needs them added again, explicitly, as real Xamarin.AndroidX NuGet packages (which
+         carry their own correct NuGet-level transitive dependency graph, unlike AndroidMavenLibrary,
+         which is just a Maven-file downloader with the exact same "no transitive resolution"
+         limitation as a raw local AndroidLibrary reference).
+         Discovered by a real crash on device: ClassNotFoundException on androidx.core.content.
+         FileProvider (declared in the merged manifest, used by the log-export feature) — Core is
+         the confirmed-necessary one; the rest mirror the Gradle dependencies block 1:1 pre-emptively. -->
+    <PackageReference Include="Xamarin.AndroidX.Core" />
+    <PackageReference Include="Xamarin.AndroidX.Activity.Compose" />
+    <PackageReference Include="Xamarin.AndroidX.DocumentFile" />
+    <PackageReference Include="Xamarin.AndroidX.Startup.StartupRuntime" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.Foundation" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.Material.Icons.Core" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.Material.Icons.Extended" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.Material3" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.UI" />
+    <PackageReference Include="Xamarin.AndroidX.Compose.UI.Tooling.Preview" />
   </ItemGroup>
 </Project>

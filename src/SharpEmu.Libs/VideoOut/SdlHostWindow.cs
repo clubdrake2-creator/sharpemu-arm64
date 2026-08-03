@@ -77,7 +77,20 @@ internal sealed unsafe class SdlHostWindow : IDisposable, IHostGamepadOutput
             throw new InvalidOperationException($"SDL window creation failed: {GetError()}");
         }
 
-        MoveToConfiguredDisplay();
+        // MoveToConfiguredDisplay's SDL_SetWindowPosition centering math is desktop-multi-window
+        // logic (position this window at a specific pixel offset within a display) that doesn't
+        // apply on Android — there is exactly one app surface, already laid out full-screen by the
+        // Activity's own View hierarchy (see GameActivity.ApplyImmersiveFullscreen), and
+        // SDL_GetDisplayBounds there can report the display's natural/portrait resolution rather
+        // than its current rotated one, which made this centering math place the window using
+        // swapped width/height — confirmed on-device as the small, top-pinned, portrait-looking
+        // surface. ApplyConfiguredMode's SDL_SetWindowFullscreen (Borderless, forced for Android in
+        // GameSession.cs) is what actually needs to run there instead.
+        if (!OperatingSystem.IsAndroid())
+        {
+            MoveToConfiguredDisplay();
+        }
+
         ApplyConfiguredMode(_options.WindowMode);
         SetIcon();
         SDL_ShowWindow(_window);

@@ -1161,7 +1161,7 @@ public static partial class KernelMemoryCompatExports
     public static int Malloc(CpuContext ctx)
     {
         ctx[CpuRegister.Rax] =
-            TryAllocateLibcHeap(ctx[CpuRegister.Rdi], DefaultLibcHeapAlignment, zeroFill: false, out var address)
+            TryAllocateLibcHeap(ctx, ctx[CpuRegister.Rdi], DefaultLibcHeapAlignment, zeroFill: false, out var address)
                 ? address
                 : 0;
         TraceLibcAllocation(
@@ -1180,7 +1180,7 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libc")]
     public static int Free(CpuContext ctx)
     {
-        FreeLibcHeap(ctx[CpuRegister.Rdi]);
+        FreeLibcHeap(ctx, ctx[CpuRegister.Rdi]);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -1194,7 +1194,7 @@ public static partial class KernelMemoryCompatExports
     {
         ctx[CpuRegister.Rax] =
             TryMultiplyAllocationSize(ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi], out var totalSize) &&
-            TryAllocateLibcHeapCore(totalSize, DefaultLibcHeapAlignment, zeroFill: true, out var address)
+            TryAllocateLibcHeapCore(ctx, totalSize, DefaultLibcHeapAlignment, zeroFill: true, out var address)
                 ? address
                 : 0;
         TraceLibcAllocation(
@@ -1220,7 +1220,7 @@ public static partial class KernelMemoryCompatExports
         if (existingAddress == 0)
         {
             ctx[CpuRegister.Rax] =
-                TryAllocateLibcHeap(requestedSize, DefaultLibcHeapAlignment, zeroFill: false, out var freshAddress)
+                TryAllocateLibcHeap(ctx, requestedSize, DefaultLibcHeapAlignment, zeroFill: false, out var freshAddress)
                     ? freshAddress
                     : 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -1228,13 +1228,13 @@ public static partial class KernelMemoryCompatExports
 
         if (requestedSize == 0)
         {
-            FreeLibcHeap(existingAddress);
+            FreeLibcHeap(ctx, existingAddress);
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         ctx[CpuRegister.Rax] =
-            TryReallocateLibcHeap(existingAddress, requestedSize, out var resizedAddress)
+            TryReallocateLibcHeap(ctx, existingAddress, requestedSize, out var resizedAddress)
                 ? resizedAddress
                 : 0;
         TraceLibcAllocation(
@@ -1255,6 +1255,7 @@ public static partial class KernelMemoryCompatExports
     {
         ctx[CpuRegister.Rax] =
             TryAllocateAlignedLibcHeap(
+                ctx,
                 alignmentValue: ctx[CpuRegister.Rdi],
                 requestedSize: ctx[CpuRegister.Rsi],
                 requireSizeMultiple: false,
@@ -1279,6 +1280,7 @@ public static partial class KernelMemoryCompatExports
     {
         ctx[CpuRegister.Rax] =
             TryAllocateAlignedLibcHeap(
+                ctx,
                 alignmentValue: ctx[CpuRegister.Rdi],
                 requestedSize: ctx[CpuRegister.Rsi],
                 requireSizeMultiple: true,
@@ -1337,7 +1339,7 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (!TryAllocateLibcHeapCore(requestedSize, alignment, zeroFill: false, out var address))
+        if (!TryAllocateLibcHeapCore(ctx, requestedSize, alignment, zeroFill: false, out var address))
         {
             _ = TryWriteUInt64Compat(ctx, outPointerAddress, 0);
             ctx[CpuRegister.Rax] = Enomem;
@@ -1354,7 +1356,7 @@ public static partial class KernelMemoryCompatExports
 
         if (!TryWriteUInt64Compat(ctx, outPointerAddress, address))
         {
-            FreeLibcHeap(address);
+            FreeLibcHeap(ctx, address);
             ctx[CpuRegister.Rax] = Einval;
             TraceLibcAllocation(
                 ctx,
@@ -6845,18 +6847,57 @@ public static partial class KernelMemoryCompatExports
         }
     }
 
-    private static bool TryAllocateLibcHeap(ulong requestedSize, nuint alignment, bool zeroFill, out ulong address)
+    private static bool TryAllocateLibcHeap(CpuContext ctx, ulong requestedSize, nuint alignment, bool zeroFill, out ulong address)
     {
         address = 0;
         return TryConvertAllocationSize(requestedSize, out var size) &&
-               TryAllocateLibcHeapCore(size, alignment, zeroFill, out address);
+               TryAllocateLibcHeapCore(ctx, size, alignment, zeroFill, out address);
     }
 
-    private static unsafe bool TryAllocateLibcHeapCore(nuint requestedSize, nuint alignment, bool zeroFill, out ulong address)
+    private static unsafe bool TryAllocateLibcHeapCore(CpuContext ctx, nuint requestedSize, nuint alignment, bool zeroFill, out ulong address)
     {
         address = 0;
         alignment = NormalizeLibcAlignment(alignment);
         var actualSize = requestedSize == 0 ? 1u : requestedSize;
+
+        // Android: route through SharpEmu's own tracked guest-memory allocator instead of
+        // Marshal.AllocHGlobal. Marshal.AllocHGlobal there goes through Mono's native allocator,
+        // which calls Bionic's Scudo — beyond the ARM64 TBI region-tagging issue (see
+        // KernelVirtualRangeAllocator.NormalizeGuestVisibleHostPointer), that memory is never
+        // registered in PhysicalVirtualMemory's tracked region list, so the interpreter's own
+        // guest-memory read/write path (which must resolve every address against a tracked region)
+        // hard-faults on it the first time guest code touches malloc'd memory directly — confirmed
+        // on-device: this is what "ORBIS_GEN2_ERROR_MEMORY_FAULT ... write@0x<untagged addr>" traced
+        // back to. Desktop's DirectExecutionBackend never hits this because it runs guest code as
+        // real host code, where host pointer == guest pointer needs no separate tracking at all —
+        // Marshal.AllocHGlobal "just works" there, so that path is untouched.
+        if (OperatingSystem.IsAndroid())
+        {
+            if (ctx.Memory is not IGuestMemoryAllocator androidAllocator ||
+                !androidAllocator.TryAllocateGuestMemory(actualSize, alignment, out var guestAddress))
+            {
+                return false;
+            }
+
+            lock (_libcAllocGate)
+            {
+                _libcAllocations[guestAddress] = new LibcHeapAllocation((nint)guestAddress, actualSize, alignment);
+            }
+
+            if (zeroFill)
+            {
+                Span<byte> zero = actualSize <= 4096 ? stackalloc byte[(int)actualSize] : new byte[actualSize];
+                zero.Clear();
+                if (!ctx.Memory.TryWrite(guestAddress, zero))
+                {
+                    FreeLibcHeap(ctx, guestAddress);
+                    return false;
+                }
+            }
+
+            address = guestAddress;
+            return true;
+        }
 
         nuint totalSize;
         try
@@ -6905,7 +6946,7 @@ public static partial class KernelMemoryCompatExports
         }
         catch
         {
-            FreeLibcHeap(alignedAddress);
+            FreeLibcHeap(ctx, alignedAddress);
             return false;
         }
 
@@ -6913,17 +6954,17 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static unsafe bool TryReallocateLibcHeap(ulong existingAddress, ulong requestedSize, out ulong resizedAddress)
+    private static unsafe bool TryReallocateLibcHeap(CpuContext ctx, ulong existingAddress, ulong requestedSize, out ulong resizedAddress)
     {
         resizedAddress = 0;
         if (existingAddress == 0)
         {
-            return TryAllocateLibcHeap(requestedSize, DefaultLibcHeapAlignment, zeroFill: false, out resizedAddress);
+            return TryAllocateLibcHeap(ctx, requestedSize, DefaultLibcHeapAlignment, zeroFill: false, out resizedAddress);
         }
 
         if (requestedSize == 0)
         {
-            FreeLibcHeap(existingAddress);
+            FreeLibcHeap(ctx, existingAddress);
             return true;
         }
 
@@ -6936,7 +6977,7 @@ public static partial class KernelMemoryCompatExports
             }
         }
 
-        if (!TryAllocateLibcHeap(requestedSize, allocation.Alignment, zeroFill: false, out resizedAddress))
+        if (!TryAllocateLibcHeap(ctx, requestedSize, allocation.Alignment, zeroFill: false, out resizedAddress))
         {
             return false;
         }
@@ -6947,11 +6988,11 @@ public static partial class KernelMemoryCompatExports
             destination: (void*)resizedAddress,
             destinationSizeInBytes: checked((long)Math.Max(bytesToCopy, 1u)),
             sourceBytesToCopy: checked((long)bytesToCopy));
-        FreeLibcHeap(existingAddress);
+        FreeLibcHeap(ctx, existingAddress);
         return true;
     }
 
-    private static bool TryAllocateAlignedLibcHeap(ulong alignmentValue, ulong requestedSize, bool requireSizeMultiple, out ulong address)
+    private static bool TryAllocateAlignedLibcHeap(CpuContext ctx, ulong alignmentValue, ulong requestedSize, bool requireSizeMultiple, out ulong address)
     {
         address = 0;
         return TryValidateAlignedAllocation(
@@ -6961,7 +7002,7 @@ public static partial class KernelMemoryCompatExports
                    requirePointerSizedAlignment: false,
                    out var alignment,
                    out var size) &&
-               TryAllocateLibcHeapCore(size, alignment, zeroFill: false, out address);
+               TryAllocateLibcHeapCore(ctx, size, alignment, zeroFill: false, out address);
     }
 
     private static bool TryValidateAlignedAllocation(
@@ -7005,7 +7046,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static void FreeLibcHeap(ulong address)
+    private static void FreeLibcHeap(CpuContext ctx, ulong address)
     {
         if (address == 0)
         {
@@ -7019,6 +7060,16 @@ public static partial class KernelMemoryCompatExports
             {
                 return;
             }
+        }
+
+        if (OperatingSystem.IsAndroid())
+        {
+            if (ctx.Memory is IGuestMemoryAllocator androidAllocator)
+            {
+                androidAllocator.TryFreeGuestMemory(address);
+            }
+
+            return;
         }
 
         Marshal.FreeHGlobal(allocation.BaseAddress);

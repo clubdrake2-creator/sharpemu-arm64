@@ -186,6 +186,13 @@ public static class SharpEmuLog
 
     private static bool ResolveColorEnabledFromEnvironment()
     {
+        // Android has no terminal — Console.ForegroundColor's setter throws
+        // PlatformNotSupportedException there, so color output is never valid to request.
+        if (OperatingSystem.IsAndroid())
+        {
+            return false;
+        }
+
         if (Console.IsOutputRedirected)
         {
             return false;

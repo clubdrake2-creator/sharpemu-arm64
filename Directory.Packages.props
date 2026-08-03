@@ -19,6 +19,21 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="NLayer" Version="1.14.0" />
     <PackageVersion Include="ppy.SDL3-CS" Version="2026.629.0" />
+    <!-- SharpEmu.Android: AndroidLibrary embeds platform/android/app's own .aar but not its Maven
+         dependency graph (see the PackageReferences in SharpEmu.Android.csproj for why). Versions
+         are each package's current latest as of this writing (confirmed via `dotnet package
+         search`) — kept in lockstep across the Compose.* family specifically, since mixing patch
+         versions there is what caused the initial NU1107 Compose.UI.Geometry conflict. -->
+    <PackageVersion Include="Xamarin.AndroidX.Core" Version="1.19.0.1" />
+    <PackageVersion Include="Xamarin.AndroidX.Activity.Compose" Version="1.13.0.1" />
+    <PackageVersion Include="Xamarin.AndroidX.DocumentFile" Version="1.1.0.4" />
+    <PackageVersion Include="Xamarin.AndroidX.Startup.StartupRuntime" Version="1.2.0.8" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.Foundation" Version="1.11.4" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.Material.Icons.Core" Version="1.7.8.7" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.Material.Icons.Extended" Version="1.7.8.6" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.Material3" Version="1.4.0.3" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.UI" Version="1.11.4" />
+    <PackageVersion Include="Xamarin.AndroidX.Compose.UI.Tooling.Preview" Version="1.11.4" />
     <PackageVersion Include="Silk.NET.Vulkan" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.23.0" />

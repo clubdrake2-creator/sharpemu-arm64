@@ -9,6 +9,31 @@ namespace SharpEmu.Libs.Kernel;
 
 internal static class KernelVirtualRangeAllocator
 {
+    /// <summary>
+    /// Strips the ARM64 Top-Byte-Ignore (TBI) tag from a host-heap pointer before it becomes
+    /// guest-visible. On Android, <c>Marshal.AllocHGlobal</c> goes through Mono's native allocator,
+    /// which calls Bionic's malloc (Scudo) — Scudo's Secondary allocator embeds a per-process region
+    /// tag in bits 56-63 of large allocations, a real (TBI-legal) pointer the ARM64 MMU dereferences
+    /// identically with or without that byte set, but one every plain <c>ulong</c> comparison in this
+    /// codebase (canonical-address checks, guest region lookups) treats as an astronomically invalid
+    /// address. Confirmed on-device: a "malloc"-equivalent import handed the guest a raw tagged
+    /// pointer (0xB4......), which the memset compat shim's canonical check rejected, and which the
+    /// interpreter's own tracked-region lookup then hard-faulted on since it was never registered as
+    /// a mapped guest region. Masking here — not at the call sites — keeps every guest-visible copy
+    /// of the pointer (the value returned to the guest, and any dictionary key derived from it)
+    /// consistent, while callers that must still pass the ORIGINAL tagged pointer to
+    /// Marshal.FreeHGlobal (Scudo can require its own tag back for the free to succeed) keep doing so
+    /// separately from whatever they hand the guest.
+    /// </summary>
+    internal static ulong NormalizeGuestVisibleHostPointer(nint pointer)
+    {
+        var address = unchecked((ulong)pointer);
+        return OperatingSystem.IsAndroid() ? address & 0x00FF_FFFF_FFFF_FFFFUL : address;
+    }
+
+    internal static ulong NormalizeGuestVisibleHostPointer(ulong address) =>
+        OperatingSystem.IsAndroid() ? address & 0x00FF_FFFF_FFFF_FFFFUL : address;
+
     public static bool TryReserve(
         CpuContext ctx,
         ulong desiredAddress,

@@ -712,7 +712,7 @@ public static class LibcStdioExports
         LibraryName = "libc")]
     public static int GetPctype(CpuContext ctx)
     {
-        ctx[CpuRegister.Rax] = unchecked((ulong)EnsureCtypeTable());
+        ctx[CpuRegister.Rax] = unchecked((ulong)EnsureCtypeTable(ctx));
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -737,7 +737,7 @@ public static class LibcStdioExports
         LibraryName = "libc")]
     public static int GetPctypeUnconfirmedAlias(CpuContext ctx) => GetPctype(ctx);
 
-    private static unsafe nint EnsureCtypeTable()
+    private static unsafe nint EnsureCtypeTable(CpuContext ctx)
     {
         lock (_ctypeTableGate)
         {
@@ -746,12 +746,38 @@ public static class LibcStdioExports
                 return _ctypeTableBase;
             }
 
-            var storage = Marshal.AllocHGlobal(CtypeTableEntryCount * sizeof(ushort));
-            var entries = new Span<ushort>((void*)storage, CtypeTableEntryCount);
-            for (var i = 0; i < CtypeTableEntryCount; i++)
+            const int storageBytes = CtypeTableEntryCount * sizeof(ushort);
+            nint storage;
+
+            // Android: route through SharpEmu's own tracked guest-memory allocator instead of
+            // Marshal.AllocHGlobal — same fix as KernelMemoryCompatExports.TryAllocateLibcHeapCore
+            // and KernelPthreadState.AllocateThreadHandle. This table is handed to the guest as a
+            // raw pointer and indexed directly (isalpha/tolower-style macros), so it must be a
+            // tracked, ARM64-TBI-tag-free address for the interpreter's guest-memory access path to
+            // resolve reads against it.
+            if (OperatingSystem.IsAndroid() &&
+                ctx.Memory is IGuestMemoryAllocator androidAllocator &&
+                androidAllocator.TryAllocateGuestMemory((ulong)storageBytes, alignment: 2, out var guestStorage))
             {
-                var c = i + CtypeTableLowerBound;
-                entries[i] = c is >= 0 and <= 0x7F ? ComputeCtypeFlags(c) : (ushort)0;
+                storage = unchecked((nint)guestStorage);
+                Span<ushort> guestEntries = stackalloc ushort[CtypeTableEntryCount];
+                for (var i = 0; i < CtypeTableEntryCount; i++)
+                {
+                    var c = i + CtypeTableLowerBound;
+                    guestEntries[i] = c is >= 0 and <= 0x7F ? ComputeCtypeFlags(c) : (ushort)0;
+                }
+
+                ctx.Memory.TryWrite(guestStorage, System.Runtime.InteropServices.MemoryMarshal.AsBytes(guestEntries));
+            }
+            else
+            {
+                storage = Marshal.AllocHGlobal(storageBytes);
+                var entries = new Span<ushort>((void*)storage, CtypeTableEntryCount);
+                for (var i = 0; i < CtypeTableEntryCount; i++)
+                {
+                    var c = i + CtypeTableLowerBound;
+                    entries[i] = c is >= 0 and <= 0x7F ? ComputeCtypeFlags(c) : (ushort)0;
+                }
             }
 
             // Table is indexed as base[c] for c in [-128, 255], so the pointer handed to the

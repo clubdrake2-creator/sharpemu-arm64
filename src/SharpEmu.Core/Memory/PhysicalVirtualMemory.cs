@@ -655,6 +655,19 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                         GuestAllocationArenaSize,
                         executable: false,
                         allowAlternative: true);
+                    if (OperatingSystem.IsAndroid())
+                    {
+                        // Diagnostic for the Android guest-heap-pointer investigation: confirms
+                        // whether faulting "destination" addresses seen in guest register dumps
+                        // (0xB4... style) actually originate from this arena's kernel-chosen
+                        // fallback address (desired 0x6000_0000_0000 is unreachable on Android's
+                        // ~39-bit VA space, same as the now-fixed CpuDispatcher/SelfLoader
+                        // constants, so this always takes the allowAlternative:true path there).
+                        Console.Error.WriteLine(
+                            $"[VMEM][ANDROID] Guest allocation arena base=0x{_guestAllocationArenaBase:X16} " +
+                            $"(desired=0x{GuestAllocationArenaAddress:X16}, size=0x{GuestAllocationArenaSize:X})");
+                    }
+
                     _guestAllocationFreeRanges.Add(
                         GuestAllocationArenaStartOffset,
                         GuestAllocationArenaSize - GuestAllocationArenaStartOffset);

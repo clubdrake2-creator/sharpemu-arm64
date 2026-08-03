@@ -3147,6 +3147,7 @@ internal static unsafe class VulkanVideoPresenter
         private Pipeline _hdrPqPipeline;
         private Sampler _hdrSampler;
         private Extent2D _extent;
+        private int _androidBlitDiagnosticCount;
         private RenderPass _renderPass;
         private PipelineLayout _pipelineLayout;
         private Pipeline _barycentricPipeline;
@@ -4615,6 +4616,16 @@ internal static unsafe class VulkanVideoPresenter
             _swapchainFormat = surfaceFormat.Format;
             _swapchainColorSpace = surfaceFormat.ColorSpace;
             _extent = ChooseExtent(capabilities);
+            if (OperatingSystem.IsAndroid())
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][INFO][ANDROID-SWAPCHAIN] capabilities.CurrentExtent={capabilities.CurrentExtent.Width}x{capabilities.CurrentExtent.Height} " +
+                    $"capabilities.CurrentTransform={capabilities.CurrentTransform} chosenExtent={_extent.Width}x{_extent.Height} " +
+                    $"minExtent={capabilities.MinImageExtent.Width}x{capabilities.MinImageExtent.Height} " +
+                    $"maxExtent={capabilities.MaxImageExtent.Width}x{capabilities.MaxImageExtent.Height} " +
+                    $"sdlWindowPixelSize={_window.PixelSize.Width}x{_window.PixelSize.Height}");
+            }
+
             HostMovieBridge.SetPresentationSize(_extent.Width, _extent.Height);
             var presentMode = ChoosePresentMode();
             var imageCount = capabilities.MinImageCount + 1;
@@ -4638,7 +4649,7 @@ internal static unsafe class VulkanVideoPresenter
                     ImageUsageFlags.TransferSrcBit |
                     ImageUsageFlags.ColorAttachmentBit,
                 ImageSharingMode = SharingMode.Exclusive,
-                PreTransform = capabilities.CurrentTransform,
+                PreTransform = ChoosePreTransform(capabilities),
                 CompositeAlpha = compositeAlpha,
                 PresentMode = presentMode,
                 Clipped = true,
@@ -17650,6 +17661,18 @@ internal static unsafe class VulkanVideoPresenter
                 destinationY = (_extent.Height - destinationHeight) / 2;
             }
 
+            if (OperatingSystem.IsAndroid())
+            {
+                var logIndex = ++_androidBlitDiagnosticCount;
+                if (logIndex <= 5 || logIndex % 300 == 0)
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][INFO][ANDROID-BLIT] scalingMode={scalingMode} extent={_extent.Width}x{_extent.Height} " +
+                        $"source={source.Width}x{source.Height} dest=({destinationX},{destinationY}) " +
+                        $"{destinationWidth}x{destinationHeight}");
+                }
+            }
+
             if (destinationX != 0 || destinationY != 0 ||
                 destinationWidth != _extent.Width || destinationHeight != _extent.Height)
             {
@@ -18019,6 +18042,28 @@ internal static unsafe class VulkanVideoPresenter
             return formats.Count > 0
                 ? formats[0]
                 : throw new InvalidOperationException("The Vulkan surface exposes no pixel formats.");
+        }
+
+        // Android's Vulkan driver commonly reports capabilities.CurrentTransform as a real rotation
+        // (e.g. Rotate90BitKhr — confirmed on-device on a Galaxy S23/Adreno 740) even though
+        // CurrentExtent already comes back in the on-screen, post-rotation orientation (2340x1080
+        // landscape here). Passing CurrentTransform straight through as PreTransform, as this code
+        // used to, tells the presentation engine to apply THAT rotation again on top of a frame this
+        // renderer already composed for the extent it was given — the on-device symptom was the
+        // game's own (correctly landscape, correctly centered) output appearing small, pinned to one
+        // corner, and rotated. shadPS4's Android swapchain code (vk_swapchain.cpp SetSurfaceProperties)
+        // avoids this by preferring the Identity transform whenever the surface supports it — letting
+        // the compositor absorb the rotation invisibly — and only falling back to CurrentTransform
+        // (requiring the app to pre-rotate its own rendering to compensate) when Identity isn't in
+        // SupportedTransforms at all.
+        private static SurfaceTransformFlagsKHR ChoosePreTransform(SurfaceCapabilitiesKHR capabilities)
+        {
+            if ((capabilities.SupportedTransforms & SurfaceTransformFlagsKHR.IdentityBitKhr) != 0)
+            {
+                return SurfaceTransformFlagsKHR.IdentityBitKhr;
+            }
+
+            return capabilities.CurrentTransform;
         }
 
         private static CompositeAlphaFlagsKHR ChooseCompositeAlpha(CompositeAlphaFlagsKHR supported)

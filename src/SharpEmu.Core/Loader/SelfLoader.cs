@@ -21,7 +21,18 @@ public sealed class SelfLoader : ISelfLoader
     private const uint Ps5SelfMagic = 0x5414F5EE;
     private const ulong SelfSegmentFlag = 0x800;
     private const int PageSize = 0x1000;
-    private const ulong ImportStubBaseAddress = 0x0000_7000_0000_0000UL;
+    // Android's arm64 kernels commonly expose only a 39-bit process VA space (max ~512 GiB) —
+    // confirmed on a Samsung Galaxy S23 via /proc/self/maps, whose highest mapped address topped out
+    // just under 512 GiB. The desktop value below (~113 TB) is unreachable there, so every
+    // MAP_FIXED_NOREPLACE probe in TryMapImportStubRegion failed identically, throwing
+    // InvalidOperationException the moment a game tried to load. This address is SharpEmu's own
+    // bookkeeping value (absolute-patched into import relocations, not part of the PS4/PS5 ABI), so
+    // any reachable address works — 64 GiB sits well clear of the guest image (loaded at 32 GiB for
+    // PS5 / near 0 for PS4) and of the mmap region Android's own dynamic linker uses near the top of
+    // the address space (observed clustering near ~495 GiB on the same device).
+    private static readonly ulong ImportStubBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_0010_0000_0000UL
+        : 0x0000_7000_0000_0000UL;
     private const ulong ImportStubAddressStride = 0x0000_0000_0100_0000UL;
     private const ulong ImportStubSlotSize = 0x10;
     private const byte StubTrapOpcode = 0xCC;

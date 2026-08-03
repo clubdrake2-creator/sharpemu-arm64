@@ -1788,7 +1788,10 @@ public static class KernelRuntimeCompatExports
             var memory = Marshal.AllocHGlobal(sizeof(ulong) * 2);
             Marshal.WriteInt64(memory, unchecked((long)_stackChkGuardValue));
             Marshal.WriteInt64(IntPtr.Add(memory, sizeof(ulong)), unchecked((long)_stackChkGuardValue));
-            return memory;
+            // See KernelVirtualRangeAllocator.NormalizeGuestVisibleHostPointer: this address becomes
+            // the guest-visible __stack_chk_guard-equivalent, so any Android ARM64 TBI region tag
+            // Scudo attached must be stripped before the guest reads it.
+            return unchecked((nint)KernelVirtualRangeAllocator.NormalizeGuestVisibleHostPointer(memory));
         }
         catch
         {

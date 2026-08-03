@@ -204,7 +204,7 @@ public static class KernelExports
         var entryAddress = ctx[CpuRegister.Rdx];
         var argument = ctx[CpuRegister.Rcx];
         var name = nameAddress == 0 ? string.Empty : ReadCString(ctx, nameAddress, 256);
-        var threadHandle = KernelPthreadState.CreateThreadHandle(name);
+        var threadHandle = KernelPthreadState.CreateThreadHandle(ctx, name);
         KernelPthreadExtendedCompatExports.GetThreadStartScheduling(
             ctx,
             attrAddress,

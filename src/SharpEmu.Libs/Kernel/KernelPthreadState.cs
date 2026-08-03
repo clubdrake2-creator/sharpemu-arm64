@@ -64,10 +64,10 @@ internal static class KernelPthreadState
             : $"0x{threadHandle:X16}";
     }
 
-    internal static ulong CreateThreadHandle(string name)
+    internal static ulong CreateThreadHandle(CpuContext ctx, string name)
     {
         var uniqueId = unchecked((ulong)Interlocked.Increment(ref _nextUniqueThreadId));
-        return AllocateThreadHandle(uniqueId, name);
+        return AllocateThreadHandle(ctx, uniqueId, name);
     }
 
     internal static bool TryGetThreadIdentity(ulong threadHandle, out ThreadIdentity identity)
@@ -116,16 +116,44 @@ internal static class KernelPthreadState
 
         var uniqueId = unchecked((ulong)Interlocked.Increment(ref _nextUniqueThreadId));
         var name = $"Thread-{uniqueId:X}";
-        _currentThreadHandle = AllocateThreadHandle(uniqueId, name);
+        // No CpuContext available here — this path assigns a synthetic identity to whatever host
+        // thread is currently running SharpEmu code without a real bound guest thread (e.g. an
+        // internal utility thread), not a real scePthreadCreate-spawned guest thread. See
+        // AllocateThreadHandle's comment for why that distinction matters on Android.
+        _currentThreadHandle = AllocateThreadHandle(ctx: null, uniqueId, name);
         _currentThreadUniqueId = uniqueId;
     }
 
-    private static ulong AllocateThreadHandle(ulong uniqueId, string name)
+    private static ulong AllocateThreadHandle(CpuContext? ctx, ulong uniqueId, string name)
     {
+        // Android: route through SharpEmu's own tracked guest-memory allocator instead of
+        // Marshal.AllocHGlobal, same architectural fix as KernelMemoryCompatExports.
+        // TryAllocateLibcHeapCore — confirmed on-device that a spawned guest thread
+        // ("spi_main_thread") faulted reading its own thread-handle object because
+        // Marshal.AllocHGlobal memory is never registered in PhysicalVirtualMemory's tracked
+        // region list, which the interpreter's guest-memory access path requires. Only takes this
+        // path when a CpuContext is available (real scePthreadCreate calls, which are the ones that
+        // hand this address to guest code); the synthetic host-thread-identity fallback in
+        // EnsureCurrentThreadRegistered has no CpuContext and keeps the previous
+        // Marshal.AllocHGlobal + TBI-tag-mask-only behavior.
+        if (ctx is not null && OperatingSystem.IsAndroid())
+        {
+            if (ctx.Memory is IGuestMemoryAllocator androidAllocator &&
+                androidAllocator.TryAllocateGuestMemory(ThreadObjectSize, alignment: 0x10, out var guestHandle))
+            {
+                ctx.Memory.TryWrite(guestHandle, ZeroThreadObject);
+                Threads[guestHandle] = new ThreadIdentity(uniqueId, string.IsNullOrWhiteSpace(name) ? $"Thread-{uniqueId:X}" : name);
+                return guestHandle;
+            }
+        }
+
         var pointer = Marshal.AllocHGlobal(ThreadObjectSize);
         Marshal.Copy(ZeroThreadObject, 0, pointer, ThreadObjectSize);
 
-        var handle = unchecked((ulong)pointer.ToInt64());
+        // See KernelVirtualRangeAllocator.NormalizeGuestVisibleHostPointer: on Android this pointer
+        // can carry Scudo's ARM64 TBI region tag, which every guest-visible use of this handle must
+        // have stripped to avoid tripping SharpEmu's own canonical-address/region-tracking checks.
+        var handle = KernelVirtualRangeAllocator.NormalizeGuestVisibleHostPointer(pointer);
         Threads[handle] = new ThreadIdentity(uniqueId, string.IsNullOrWhiteSpace(name) ? $"Thread-{uniqueId:X}" : name);
 
         return handle;

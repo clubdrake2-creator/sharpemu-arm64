@@ -25,18 +25,48 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     // freely mappable on Windows; on macOS/Linux it hosts the dyld shared
     // cache / vdso and (under Rosetta 2) the translator runtime, so POSIX
     // hosts use the equivalent layout one slot lower at 0x6FFx.
-    private static readonly ulong StackBaseAddress = OperatingSystem.IsWindows() ? 0x7FFF_F000_0000UL : 0x6FFF_F000_0000UL;
+    //
+    // Android's arm64 kernels commonly expose only a 39-bit process VA space (max ~512 GiB, confirmed
+    // on a Samsung Galaxy S23 via /proc/self/maps) — the 0x6FFx/0x7FFx desktop values above (bit 46
+    // set, ~70 TB+) are unreachable there, so every MAP_FIXED_NOREPLACE probe in the TryMap*Region
+    // helpers below failed identically, the same way SelfLoader.ImportStubBaseAddress's did (see its
+    // comment). None of these six addresses are part of the PS4/PS5 ABI — they're SharpEmu's own
+    // internal stack/TLS/stub bookkeeping — so any reachable, mutually non-overlapping addresses work.
+    //
+    // First attempt used 0x20_0000_0000 (128 GiB) as the cluster base — this turned out to exactly
+    // collide with KernelMemoryCompatExports.DefaultMapSearchBase, the address every *guest* sceKernelMmap
+    // call with no hint searches upward from (unbounded growth, shared across all POSIX hosts, not
+    // Android-specific). On a real device this manifested as the guest's own heap-growth mmaps getting
+    // shoved past this fixed cluster, eventually landing hundreds of GiB away in the same region as
+    // Android's own untracked native allocations — the guest register then held a real-looking but
+    // wrong pointer (0xB4... prefixed) that later faulted. Fixed by moving this whole cluster below
+    // DefaultMapSearchBase entirely: spaced 1 GiB apart (each TryMap*Region helper only searches up to
+    // 512 MiB downward from its base) in the 48-59 GiB range, comfortably above the guest image (32 GiB
+    // for PS5) and clear of SelfLoader's import stub region (64 GiB) and DefaultMapSearchBase (128 GiB).
+    private static readonly ulong StackBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000C_0000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFF_F000_0000UL : 0x6FFF_F000_0000UL);
     internal const ulong StackSize = 0x0020_0000UL;
-    private static readonly ulong TlsBaseAddress = OperatingSystem.IsWindows() ? 0x7FFE_0000_0000UL : 0x6FFE_0000_0000UL;
+    private static readonly ulong TlsBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000D_0000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFE_0000_0000UL : 0x6FFE_0000_0000UL);
     private const ulong TlsSize = 0x0001_0000UL;
     // The static TLS blocks live at negative offsets from the TCB (FreeBSD
     // amd64 variant II). Keep every host in sync with GuestTlsTemplate's
     // startup reservation; PS5 modules routinely reach beyond one host page.
     private const ulong TlsPrefixSize = GuestTlsTemplate.StartupStaticTlsReservation;
-    private static readonly ulong BootstrapStubBaseAddress = OperatingSystem.IsWindows() ? 0x7FFD_F000_0000UL : 0x6FFD_F000_0000UL;
-    private static readonly ulong BootstrapPayloadBaseAddress = OperatingSystem.IsWindows() ? 0x7FFD_E000_0000UL : 0x6FFD_E000_0000UL;
-    private static readonly ulong DynlibFallbackStubBaseAddress = OperatingSystem.IsWindows() ? 0x7FFD_D000_0000UL : 0x6FFD_D000_0000UL;
-    private static readonly ulong ReturnToHostStubBaseAddress = OperatingSystem.IsWindows() ? 0x7FFD_C000_0000UL : 0x6FFD_C000_0000UL;
+    private static readonly ulong BootstrapStubBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000E_0000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFD_F000_0000UL : 0x6FFD_F000_0000UL);
+    private static readonly ulong BootstrapPayloadBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000E_4000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFD_E000_0000UL : 0x6FFD_E000_0000UL);
+    private static readonly ulong DynlibFallbackStubBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000E_8000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFD_D000_0000UL : 0x6FFD_D000_0000UL);
+    private static readonly ulong ReturnToHostStubBaseAddress = OperatingSystem.IsAndroid()
+        ? 0x0000_000E_C000_0000UL
+        : (OperatingSystem.IsWindows() ? 0x7FFD_C000_0000UL : 0x6FFD_C000_0000UL);
     private const ulong BootstrapRegionSize = 0x0000_1000UL;
     private const ulong ReturnToHostStubStride = 0x0100_0000UL;
     private const ulong BootstrapPayloadResultOffset = 0x28UL;
