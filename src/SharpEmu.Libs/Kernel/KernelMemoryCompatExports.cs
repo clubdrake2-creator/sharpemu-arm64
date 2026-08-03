@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using SharpEmu.Libs.Ampr;
 using SharpEmu.Libs.Media;
 using System.Buffers;
@@ -5473,7 +5474,7 @@ public static partial class KernelMemoryCompatExports
 
     private static string ResolveGameLogRoot() =>
         Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
+            AndroidHostPaths.ExternalFilesRoot ?? AppContext.BaseDirectory,
             "user",
             "game_logs",
             Volatile.Read(ref _applicationTitleId)));

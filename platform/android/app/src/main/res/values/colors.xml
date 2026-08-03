@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ported from the PCSX2-Android theme. The Compose ShadTheme controls the runtime Material 3
+     palette; these resources only back the window/splash background so the app surface matches the
+     theme before Compose draws. Light values here, dark in values-night/colors.xml. -->
+<resources>
+    <color name="ic_launcher_background">#003087</color>
+    <color name="app_window_background">#FFFBFE</color>
+    <color name="splash_background">#FFFBFE</color>
+</resources>

@@ -5,7 +5,7 @@ using SharpEmu.HLE.Host.Sdl;
 
 namespace SharpEmu.HLE.Host.Posix;
 
-internal sealed class PosixHostPlatform : IHostPlatform
+internal class PosixHostPlatform : IHostPlatform
 {
     public IHostMemory Memory { get; } = new PosixHostMemory();
 

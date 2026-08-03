@@ -345,6 +345,17 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 effectiveImportStubs);
         debugHook?.OnFrameEnter(debugFrame!);
 
+        // Belt-and-suspenders: Program.cs's argument-parsing gate is the real
+        // fix (it forces CpuExecutionEngine.Interpreter and rejects an
+        // explicit --cpu-engine=native on Android before this method can ever
+        // be reached), but fail loud here too rather than let a caller that
+        // bypasses that gate construct a backend that assumes an x86-64 host.
+        if (OperatingSystem.IsAndroid())
+        {
+            throw new PlatformNotSupportedException(
+                "Native guest execution is impossible on Android/ARM64 — use CpuExecutionEngine.Interpreter.");
+        }
+
         _nativeCpuBackend ??= new DirectExecutionBackend(_moduleManager);
         // Let backend stall reports reference the same frame as entry.
         (_nativeCpuBackend as DirectExecutionBackend)?.SetActiveDebugFrame(debugFrame);

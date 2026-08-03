@@ -1,6 +1,8 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE.Host;
+
 namespace SharpEmu.Libs.VideoOut;
 
 internal static class VulkanPipelineCacheStorage
@@ -15,8 +17,12 @@ internal static class VulkanPipelineCacheStorage
                 Environment.ExpandEnvironmentVariables(configuredPath));
         }
 
+        var root = AndroidHostPaths.ExternalFilesRoot is { } externalRoot
+            ? externalRoot
+            : AppContext.BaseDirectory;
+
         return Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
+            root,
             "user",
             "pipeline_cache",
             SanitizeTitleId(titleId),

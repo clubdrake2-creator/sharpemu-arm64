@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using SharpEmu.HLE.Host;
 
 namespace SharpEmu.Libs.Ampr;
 
@@ -307,12 +308,23 @@ internal static class AmprFileRegistry
     private static string GetIndexCachePath(string normalizedRoot, int version)
     {
         var overrideDir = Environment.GetEnvironmentVariable("SHARPEMU_AMPR_INDEX_CACHE");
-        var cacheDir = !string.IsNullOrWhiteSpace(overrideDir)
-            ? overrideDir
-            : Path.Combine(
+        string cacheDir;
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+        {
+            cacheDir = overrideDir;
+        }
+        else if (AndroidHostPaths.InternalFilesRoot is { } internalRoot)
+        {
+            cacheDir = Path.Combine(internalRoot, "ampr-index");
+        }
+        else
+        {
+            cacheDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "SharpEmu",
                 "ampr-index");
+        }
+
         Directory.CreateDirectory(cacheDir);
 
         var rootHash = ComputeFileId(normalizedRoot.ToLowerInvariant());

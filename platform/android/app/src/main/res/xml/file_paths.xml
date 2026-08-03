@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- The emulator's log directory inside the app's external files dir, exposed so the in-game
+         export button can share sharpemu_log.txt via a FileProvider content:// URI. -->
+    <external-files-path name="logs" path="SharpEmu/log/" />
+    <external-files-path name="SharpEmu" path="SharpEmu/" />
+    <cache-path name="cache" path="." />
+</paths>

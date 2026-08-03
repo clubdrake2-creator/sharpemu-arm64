@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SharpEmu.HLE.Host;
 
 namespace SharpEmu.Libs.SaveData;
 
@@ -17,27 +18,47 @@ namespace SharpEmu.Libs.SaveData;
 /// </summary>
 public static class SaveDataStorage
 {
-    /// <summary>Root of all saves: the env override, else the portable <c>user/savedata</c> directory.</summary>
+    /// <summary>
+    /// Root of all saves: the env override, else (on Android) the app's external
+    /// storage root, else the portable <c>user/savedata</c> directory.
+    /// </summary>
     public static string Root(string? overrideDir = null)
     {
         var configured = overrideDir ?? Environment.GetEnvironmentVariable("SHARPEMU_SAVEDATA_DIR");
-        var root = string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(AppContext.BaseDirectory, "user", "savedata")
-            : configured;
-        return Path.GetFullPath(root);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
+
+        if (AndroidHostPaths.ExternalFilesRoot is { } externalRoot)
+        {
+            return Path.GetFullPath(Path.Combine(externalRoot, "savedata"));
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "user", "savedata"));
     }
 
     /// <summary>
     /// Imports saves written by the short-lived profile layout and by the old
     /// numeric-user layout. Newer destination files are never overwritten.
+    /// There is no prior desktop install to migrate from on Android, so this
+    /// is a no-op there unless the caller passes an explicit <paramref name="profileRoot"/>.
     /// </summary>
     public static void MigrateLegacyLayout(string destinationRoot, string? profileRoot = null)
     {
         destinationRoot = Path.GetFullPath(destinationRoot);
-        profileRoot ??= Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "SharpEmu",
-            "Saves");
+        if (profileRoot is null)
+        {
+            if (OperatingSystem.IsAndroid())
+            {
+                return;
+            }
+
+            profileRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "SharpEmu",
+                "Saves");
+        }
 
         if (Directory.Exists(profileRoot) &&
             !string.Equals(Path.GetFullPath(profileRoot), destinationRoot, StringComparison.OrdinalIgnoreCase))

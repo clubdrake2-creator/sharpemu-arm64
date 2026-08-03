@@ -4469,8 +4469,11 @@ internal static unsafe class VulkanVideoPresenter
             var cachePath = VulkanPipelineCacheStorage.ResolvePath(
                 VideoOutExports.GetApplicationTitleId(),
                 configured);
-            if (string.IsNullOrWhiteSpace(configured))
+            if (string.IsNullOrWhiteSpace(configured) && !OperatingSystem.IsAndroid())
             {
+                // There is no prior desktop install to migrate a legacy cache
+                // from on Android, and SpecialFolder resolution isn't a path
+                // worth trusting there even as a no-op probe.
                 try
                 {
                     var legacyPath = VulkanPipelineCacheStorage.GetLegacyPath();

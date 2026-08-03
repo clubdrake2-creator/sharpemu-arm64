@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- Base application theme, ported from PCSX2-Android's Theme.PCSX2. The Compose ShadTheme controls
+     the runtime Material 3 Expressive palette; this XML theme only removes the title bar and sets a
+     DayNight window background (light/dark via @color/app_window_background) so the window matches
+     the Compose surface before/around drawing. Uses the framework DayNight parent (minSdk 29) so no
+     AppCompat dependency is required. -->
+<resources>
+    <style name="Theme.SharpEmuAndroid" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowBackground">@color/app_window_background</item>
+        <item name="android:colorAccent">#006D77</item>
+    </style>
+</resources>

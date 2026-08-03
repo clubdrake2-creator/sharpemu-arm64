@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark-mode window/splash background (ported from PCSX2-Android values-night). -->
+<resources>
+    <color name="app_window_background">#1C1B1F</color>
+    <color name="splash_background">#1C1B1F</color>
+</resources>

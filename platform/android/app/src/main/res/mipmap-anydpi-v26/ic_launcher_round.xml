@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-bleed launcher icon (round variant): logo as the background layer to fill the whole tile. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_full" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>

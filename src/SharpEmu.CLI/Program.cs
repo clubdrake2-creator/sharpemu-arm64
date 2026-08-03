@@ -144,12 +144,17 @@ internal static partial class Program
 
     /// <summary>
     /// The supported host execution model, checked before any emulation
-    /// starts: the CPU backend executes guest x86-64 code natively, so the
-    /// host process must be x86-64 — win-x64/linux-x64 on x64 hardware, or
-    /// osx-x64 under Rosetta 2 on Apple Silicon (Rosetta translates the
-    /// whole process, so it still reports as X64 here). Failing up front on
-    /// any other process architecture distinguishes that from MoltenVK,
-    /// signal-handler, or guest-memory startup problems.
+    /// starts: the native CPU backend executes guest x86-64 code natively, so
+    /// the host process must be x86-64 — win-x64/linux-x64 on x64 hardware,
+    /// or osx-x64 under Rosetta 2 on Apple Silicon (Rosetta translates the
+    /// whole process, so it still reports as X64 here). Android/ARM64 is the
+    /// one exception: it never has a native path available (see the
+    /// interpreter-forcing default below and <c>CpuDispatcher</c>'s own
+    /// Android guard), so it is accepted here purely so architecture
+    /// rejection happens at this single, well-known checkpoint rather than
+    /// scattered across every subsystem that assumes x86-64. Failing up
+    /// front on any other process architecture distinguishes that from
+    /// MoltenVK, signal-handler, or guest-memory startup problems.
     /// </summary>
     private static bool CheckHostArchitecture()
     {
@@ -158,10 +163,16 @@ internal static partial class Program
             return true;
         }
 
+        if (OperatingSystem.IsAndroid() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            return true;
+        }
+
         Console.Error.WriteLine(
             $"[LOADER][ERROR] Unsupported process architecture " +
             $"{RuntimeInformation.ProcessArchitecture}: guest code executes " +
-            "natively, so SharpEmu must run as an x86-64 process.");
+            "natively, so SharpEmu must run as an x86-64 process (or as an " +
+            "ARM64 process on Android, which is limited to the x64 interpreter).");
         if (OperatingSystem.IsMacOS())
         {
             Console.Error.WriteLine(
@@ -1048,7 +1059,12 @@ internal static partial class Program
 
         var strictDynlibResolution = false;
         var importTraceLimit = 0;
-        var cpuEngine = CpuExecutionEngine.NativeOnly;
+        // Android/ARM64 has no native guest-execution path at all (see
+        // CheckHostArchitecture and CpuDispatcher's own Android guard), so it
+        // defaults to the interpreter rather than NativeOnly; an explicit
+        // --cpu-engine=native from a launch Intent is rejected below rather
+        // than silently falling through to DirectExecutionBackend.
+        var cpuEngine = OperatingSystem.IsAndroid() ? CpuExecutionEngine.Interpreter : CpuExecutionEngine.NativeOnly;
         var interpreterTrace = false;
         var interpreterMaxInstructions = 0;
         HostWindowMode? windowModeOverride = null;
@@ -1358,6 +1374,18 @@ internal static partial class Program
             }
 
             pathTokens.Add(argument);
+        }
+
+        if (OperatingSystem.IsAndroid() && cpuEngine != CpuExecutionEngine.Interpreter)
+        {
+            Console.Error.WriteLine(
+                "[LOADER][ERROR] Native execution is impossible on Android/ARM64; " +
+                "omit --cpu-engine or pass --cpu-engine=interpreter.");
+            ebootPath = string.Empty;
+            runtimeOptions = default;
+            logLevel = SharpEmuLog.MinimumLevel;
+            logFilePath = null;
+            return false;
         }
 
         if (pathTokens.Count == 0)
