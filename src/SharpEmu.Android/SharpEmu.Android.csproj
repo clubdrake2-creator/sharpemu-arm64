@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Must match the Kotlin library's android.namespace (platform/android/app) so unqualified
+         Activity name references (".MainActivity", ".GameActivity") in its manifest resolve
+         consistently once merged into this app, and so ${applicationId}.fileprovider etc. in that
+         manifest line up with this app's real package. -->
+    <ApplicationId>org.sharpemu.android</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <!-- The whole SharpEmu.Android/ProjectReference chain (Core/HLE/Libs/...) is not written with
+         trimming/AOT safety in mind (reflection-based JSON, dynamic P/Invoke resolution in a few
+         HLE export tables) — leave trimming and AOT off until that's been audited, rather than risk
+         silent runtime breakage for an app-size/startup-time win. This also keeps the interpreter
+         itself running under plain Mono JIT rather than Mono's Full/Hybrid AOT — compiling it
+         AOT-only would remove the JIT's own ability to specialize hot interpreter loops at runtime,
+         on top of being an unaudited-safety risk for the same reflection-heavy code. Release mode
+         defaults RunAOTCompilation=true, which requires PublishTrimmed=true (XA1030) — both are
+         disabled together here for that reason. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Plain net10.0 class libraries, referenced directly — no interop layer needed here, this is
+         ordinary managed code calling managed code. See docs/android-port notes for why this is the
+         one part of the port that needed no adaptation at all. -->
+    <ProjectReference Include="..\SharpEmu.Core\SharpEmu.Core.csproj" />
+    <ProjectReference Include="..\SharpEmu.HLE\SharpEmu.HLE.csproj" />
+    <ProjectReference Include="..\SharpEmu.Libs\SharpEmu.Libs.csproj" />
+    <ProjectReference Include="..\SharpEmu.Logging\SharpEmu.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Kotlin/Compose UI (game library, settings, controller config, touch overlay — see
+         platform/android/app) built as an Android library .aar. Java.Interop generates C#-callable
+         bindings for its public types, including the EmulatorBridge interface this project
+         implements (EmulatorBridgeImpl.cs) and hands to the library via EmulatorBridgeHolder. -->
+    <AndroidLibrary Include="..\..\platform\android\app\build\outputs\aar\app-release.aar" />
+  </ItemGroup>
+</Project>

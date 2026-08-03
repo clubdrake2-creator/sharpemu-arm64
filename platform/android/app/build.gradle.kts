@@ -1,55 +1,38 @@
 ﻿import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+// This module builds the SharpEmu Kotlin/Compose UI (game library, settings,
+// controller config, etc.) as an Android *library* (.aar), not a standalone
+// app. The actual installed app is the SharpEmu.Android net10.0-android
+// project (src/SharpEmu.Android in the main SharpEmu repo), which consumes
+// this .aar via the AndroidLibrary MSBuild item and hosts the real Activity
+// lifecycle, the Mono runtime, and SharpEmu's managed emulator core
+// directly — SDL3 is driven from C# (ppy.SDL3-CS), the same way it already
+// is on desktop, not through this module's Kotlin/native code. This is a
+// deliberate inversion of shadPS4's own Android/ layout (whose Android/app
+// module IS a standalone application with a native C++ core baked in): that
+// shape assumes a native core, so it can't host a managed .NET core the same
+// way — see the port's design notes for why.
+//
+// No externalNativeBuild / CMake target lives here any more for the same
+// reason: there is no native shim to build. GameActivity's SDL-driven
+// emulation loop is implemented in C# in the app project instead.
 plugins {
-    id("com.android.application")
+    id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val includeX64AndroidAbi = providers.gradleProperty("includeX64")
-    .map(String::toBoolean)
-    .getOrElse(false)
-
 android {
     namespace = "org.sharpemu.android"
     compileSdk = 36
-    ndkVersion = "29.0.13113456"
 
     defaultConfig {
-        applicationId = "org.sharpemu.android"
         minSdk = 29
-        targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-poc"
-
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-            if (includeX64AndroidAbi) {
-                abiFilters += listOf("x86_64")
-            }
-        }
-
-        externalNativeBuild {
-            cmake {
-                // sharpemu_shim is a small C shim (no C++ core to build here —
-                // SharpEmu's emulator core is managed C#/.NET, loaded via the
-                // SharpEmu.Android bridge, not this .so). See
-                // app/src/main/cpp/CMakeLists.txt.
-                targets += listOf("sharpemu_shim")
-            }
-        }
     }
 
     buildTypes {
-        // The interpreter is extremely sensitive to compiler optimization: a Debug (-O0) native
-        // build leaves every hot helper (register/flag/operand access) as a real, non-inlined
-        // call. The release variant compiles the native code with CMAKE_BUILD_TYPE=Release (-O3,
-        // NDEBUG), which is by far the biggest single speed-up for the guest interpreter. It is
-        // signed with the debug key so it stays directly installable for testing.
         getByName("release") {
             isMinifyEnabled = false
-            isDebuggable = true
-            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -63,30 +46,19 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    externalNativeBuild {
-        cmake {
-            // Points directly at this module's own CMakeLists.txt — the
-            // shadPS4 source this was copied from instead pointed two levels
-            // up at the wider repo's root CMakeLists.txt (its Android/
-            // folder was built as part of a much larger CMake project);
-            // there is no equivalent wider C++ project here to hang off of.
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "4.3.2"
-        }
-    }
-
     // shadPS4's Android/ folder sourced this from its wider checkout's
     // "externals/sdl3" git submodule (SDL 3.5.0), which isn't part of this
     // copy — vendored directly instead, since there is no equivalent wider
-    // repo to hang a submodule off of here. ppy.SDL3-CS's Android runtime
-    // packages ship the matching native .so but not this Java glue, which
-    // upstream SDL3 only distributes as source.
+    // repo to hang a submodule off of here.
+    //
+    // TODO: most of org.libsdl.app.* (SDLActivity and its surface/input glue)
+    // is no longer needed now that SDL3 is driven from C#, not from a Kotlin
+    // SDLActivity subclass — GamePadBridge's references to SDL constants are
+    // the one piece still worth keeping. Trim this source set once
+    // GameActivity.kt is fully replaced by the C# GameActivity.
     sourceSets["main"].java.srcDir(file("../../externals/sdl3-android-java"))
 
     packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }

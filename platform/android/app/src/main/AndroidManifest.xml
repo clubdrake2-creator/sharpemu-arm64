@@ -44,16 +44,16 @@
         <meta-data
             android:name="android.game_mode_config"
             android:resource="@xml/game_config" />
-        <activity
-            android:name=".GameActivity"
-            android:alwaysRetainTaskState="true"
-            android:configChanges="layoutDirection|locale|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:preferMinimalPostProcessing="true"
-            android:process=":game"
-            android:supportsPictureInPicture="true"
-            android:screenOrientation="sensorLandscape" />
+
+        <!-- GameActivity is no longer declared here: the real emulation/rendering
+             Activity is implemented in C# (SharpEmu.Android's GameActivity.cs,
+             [Activity(Name = "org.sharpemu.android.GameActivity", Process = ":game", ...)]),
+             since it hosts SDL3 + SharpEmu's managed core directly rather than
+             going through this library's Kotlin/native code. MainActivity
+             launches it via an explicit Intent naming that class, the same way
+             it would launch any other Activity in this package regardless of
+             implementation language. -->
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

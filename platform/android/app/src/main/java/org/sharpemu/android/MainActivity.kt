@@ -806,40 +806,11 @@ private fun SharpEmuAndroidApp() {
                     },
                     onGameSelected = { game ->
                         val appRoot = repository.getAppRoot()
-                        val cpuBackend = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_backend"
-                        }?.value ?: "x64-aarch64-asmjit"
-                        val cpuJitDetailedProfile = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_detailed_profile"
-                        }?.value ?: "false"
-                        val cpuJitDeepDebug = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_deep_debug"
-                        }?.value ?: "false"
-                        val cpuJitNativeDiagnostics = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_native_diagnostics"
-                        }?.value ?: "false"
-                        val cpuJitArm64DisallowFallback = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_arm64_disallow_fallback"
-                        }?.value ?: "false"
-                        val cpuX64Arm64BootTurbo = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_x64arm64_boot_turbo"
-                        }?.value ?: "false"
                         val renderDiagCaptureEnabled = settings.settings.firstOrNull {
                             it.section == "Android" && it.key == "render_diag_capture_enabled"
                         }?.value == "true"
                         context.startActivity(
-                            GameActivity.createIntent(
-                                context,
-                                game,
-                                appRoot,
-                                cpuBackend,
-                                cpuJitDetailedProfile,
-                                cpuJitDeepDebug,
-                                cpuJitNativeDiagnostics,
-                                cpuX64Arm64BootTurbo,
-                                cpuJitArm64DisallowFallback,
-                                renderDiagCaptureEnabled,
-                            ),
+                            GameLaunch.createIntent(context, game, appRoot, renderDiagCaptureEnabled),
                         )
                     },
                     onOpenGameSettings = { game ->
@@ -871,35 +842,7 @@ private fun SharpEmuAndroidApp() {
                     },
                     onCreateShortcut = { game ->
                         val appRoot = repository.getAppRoot()
-                        val cpuBackend = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_backend"
-                        }?.value ?: "x64-aarch64-asmjit"
-                        val cpuJitDetailedProfile = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_detailed_profile"
-                        }?.value ?: "false"
-                        val cpuJitDeepDebug = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_deep_debug"
-                        }?.value ?: "false"
-                        val cpuJitNativeDiagnostics = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_native_diagnostics"
-                        }?.value ?: "false"
-                        val cpuJitArm64DisallowFallback = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_jit_arm64_disallow_fallback"
-                        }?.value ?: "false"
-                        val cpuX64Arm64BootTurbo = settings.settings.firstOrNull {
-                            it.section == "General" && it.key == "cpu_x64arm64_boot_turbo"
-                        }?.value ?: "false"
-                        val msg = createGameShortcut(
-                            context,
-                            game,
-                            appRoot,
-                            cpuBackend,
-                            cpuJitDetailedProfile,
-                            cpuJitDeepDebug,
-                            cpuJitNativeDiagnostics,
-                            cpuX64Arm64BootTurbo,
-                            cpuJitArm64DisallowFallback,
-                        )
+                        val msg = createGameShortcut(context, game, appRoot)
                         toast(msg)
                     },
                     loadGameDetails = { id -> repository.loadGameDetails(id) },
@@ -2693,27 +2636,11 @@ private fun createGameShortcut(
     context: Context,
     game: GameEntry,
     appRoot: String,
-    cpuBackend: String,
-    cpuJitDetailedProfile: String,
-    cpuJitDeepDebug: String,
-    cpuJitNativeDiagnostics: String,
-    cpuX64Arm64BootTurbo: String,
-    cpuJitArm64DisallowFallback: String = "",
 ): String {
     if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
         return "A tela inicial não suporta atalhos fixados"
     }
-    val launch = GameActivity.createIntent(
-        context,
-        game,
-        appRoot,
-        cpuBackend,
-        cpuJitDetailedProfile,
-        cpuJitDeepDebug,
-        cpuJitNativeDiagnostics,
-        cpuX64Arm64BootTurbo,
-        cpuJitArm64DisallowFallback,
-    )
+    val launch = GameLaunch.createIntent(context, game, appRoot)
         .setAction(Intent.ACTION_VIEW)
     val bmp = runCatching { android.graphics.BitmapFactory.decodeFile(game.icon) }.getOrNull()
     val icon = if (bmp != null) {

@@ -1,13 +1,16 @@
-﻿// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Adapted for the SharpEmu Emulator Project, Copyright (C) 2026.
 
 package org.sharpemu.android
 
 import android.util.Log
+import org.sharpemu.android.core.EmulatorBridgeHolder
 
-// Bridge to the on-screen touch controls' native virtual gamepad. Button/axis constants mirror
-// SDL_GamepadButton / SDL_GamepadAxis ordering.
+// Bridge to the on-screen touch controls' virtual gamepad. Button/axis constants mirror
+// SDL_GamepadButton / SDL_GamepadAxis ordering. Forwards to EmulatorBridgeHolder.instance — see
+// EmulatorBridge's doc comment for why (this used to call straight into a native "emucore" library
+// via hand-written JNI; SharpEmu's core is managed C#, so there is no such library here).
 object GamePadBridge {
     private const val TAG = "GamePadBridge"
 
@@ -36,30 +39,21 @@ object GamePadBridge {
     const val AXIS_LEFT_TRIGGER = 4  // L2
     const val AXIS_RIGHT_TRIGGER = 5 // R2
 
-    init {
-        runCatching { System.loadLibrary("emucore") }
-            .onFailure { Log.e(TAG, "Failed to load libemucore for virtual gamepad", it) }
-    }
-
-    external fun nativeSetButton(button: Int, pressed: Boolean)
-    external fun nativeSetAxis(axis: Int, value: Int)
-    external fun nativeRequestRenderDiagCapture()
-
     fun setButton(button: Int, pressed: Boolean) {
-        runCatching { nativeSetButton(button, pressed) }
-            .onFailure { Log.e(TAG, "nativeSetButton failed button=$button pressed=$pressed", it) }
+        runCatching { EmulatorBridgeHolder.require().setPadButton(button, pressed) }
+            .onFailure { Log.e(TAG, "setPadButton failed button=$button pressed=$pressed", it) }
     }
 
     fun setAxis(axis: Int, value: Int) {
-        runCatching { nativeSetAxis(axis, value) }
-            .onFailure { Log.e(TAG, "nativeSetAxis failed axis=$axis value=$value", it) }
+        runCatching { EmulatorBridgeHolder.require().setPadAxis(axis, value) }
+            .onFailure { Log.e(TAG, "setPadAxis failed axis=$axis value=$value", it) }
     }
 
     // Triggers the same render-diagnostics capture as the desktop keyboard shortcut: a
     // screenshot (or RenderDoc capture if loaded) plus a short PM4 packet trace, used to report
     // rendering bugs. Shown as an on-screen button only when render_diag_capture_enabled is on.
     fun requestRenderDiagCapture() {
-        runCatching { nativeRequestRenderDiagCapture() }
-            .onFailure { Log.e(TAG, "nativeRequestRenderDiagCapture failed", it) }
+        runCatching { EmulatorBridgeHolder.require().requestRenderDiagCapture() }
+            .onFailure { Log.e(TAG, "requestRenderDiagCapture failed", it) }
     }
 }

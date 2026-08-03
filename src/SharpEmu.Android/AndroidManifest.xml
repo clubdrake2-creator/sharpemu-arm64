@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately minimal: android:icon/theme/permissions/activities/provider all come from
+     platform/android/app's manifest (the Kotlin/Compose UI library), merged in automatically via
+     the AndroidLibrary reference in SharpEmu.Android.csproj — declaring them again here would
+     conflict with (or silently shadow) that library's values at manifest-merge time.
+     android:label is the one exception: .NET-for-Android's own build auto-generates a default
+     "android:label=(applicationId)" for this manifest regardless of what's written here, which
+     collides with the library's real "SharpEmu" label at merge time — tools:replace resolves that
+     collision in this manifest's favor, so it must actually carry the real value. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+  <application
+      android:allowBackup="false"
+      android:label="SharpEmu"
+      tools:replace="android:label" />
+</manifest>
