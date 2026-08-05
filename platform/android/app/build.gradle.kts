@@ -21,7 +21,7 @@
 // APK version lives in SharpEmu.Android.csproj's ApplicationVersion/ApplicationDisplayVersion.
 // This project-level Gradle version is kept in sync with that value for anyone building/publishing
 // this .aar independently.
-version = "0.0.1_poc"
+version = "0.0.2_poc"
 
 plugins {
     id("com.android.library")

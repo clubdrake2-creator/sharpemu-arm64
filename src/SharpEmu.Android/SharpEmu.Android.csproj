@@ -11,7 +11,7 @@
          manifest line up with this app's real package. -->
     <ApplicationId>org.sharpemu.android</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>0.0.1_poc</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>0.0.2_poc</ApplicationDisplayVersion>
     <!-- The whole SharpEmu.Android/ProjectReference chain (Core/HLE/Libs/...) is not written with
          trimming/AOT safety in mind (reflection-based JSON, dynamic P/Invoke resolution in a few
          HLE export tables) — leave trimming and AOT off until that's been audited, rather than risk

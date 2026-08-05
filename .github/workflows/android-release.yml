@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APK_VERSION: 0.0.1_poc
-  APK_NAME: SharpEmu-Android-0.0.1_poc.apk
+  APK_VERSION: 0.0.2_poc
+  APK_NAME: SharpEmu-Android-0.0.2_poc.apk
 
 jobs:
   build-and-release:
