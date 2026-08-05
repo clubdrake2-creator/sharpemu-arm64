@@ -27,7 +27,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 > SharpEmu supports Windows x64, Linux x64, and macOS x64. Apple Silicon Macs
 > can run the macOS x64 build through Rosetta 2, and Windows on ARM devices
 > (e.g. Snapdragon) can run the Windows x64 build through Windows' built-in
-> x64 emulation.
+> x64 emulation. An unofficial, experimental Android (ARM64) build also
+> exists as a proof of concept, but it is not an officially supported platform.
 
 > [!WARNING]  
 > SharpEmu is an experimental PS5 emulator developed from scratch in C#. The current focus is on accuracy and infrastructure setup rather than game-specific compatibility.
