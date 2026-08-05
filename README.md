@@ -43,13 +43,9 @@ Our goal is **not** to emulate PS4 games, as there is already an excellent emula
 
 ## Games Tested
 
-|               Demons Souls Remake                   |                     Dreaming Sarah                         |
-| :-----------------------------------------------------------: | :--------------------------------------------------------------------------------------------: |
-| ![Bloodborne screenshot](./.github/images/demons-souls.jpg) | ![Dreaming Sarah](./.github/images/dreaming-sarah.jpg) |
-
-|                  Void Terrarium                     |                 Dead Cells                    |
-| :------------------------------------------------------------------------: | :------------------------------------------------------------------: |
-| ![Void Terrarium](./.github/images/void-terrarium.jpg) | ![Dead Cells](./.github/images/dead-cells.jpg) |
+|                     Dreaming Sarah                         |
+| :--------------------------------------------------------------------------------------------: |
+| ![Dreaming Sarah](./.github/images/dreaming-sarah.jpg) |
 
 ## Status
 

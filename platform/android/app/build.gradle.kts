@@ -16,6 +16,13 @@
 // No externalNativeBuild / CMake target lives here any more for the same
 // reason: there is no native shim to build. GameActivity's SDL-driven
 // emulation loop is implemented in C# in the app project instead.
+// versionCode/versionName aren't valid defaultConfig fields for a library module (AGP's
+// com.android.library plugin doesn't expose them, unlike com.android.application) -- the real
+// APK version lives in SharpEmu.Android.csproj's ApplicationVersion/ApplicationDisplayVersion.
+// This project-level Gradle version is kept in sync with that value for anyone building/publishing
+// this .aar independently.
+version = "0.0.1_poc"
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
