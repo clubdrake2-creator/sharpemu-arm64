@@ -2362,7 +2362,7 @@ public partial class MainWindow : Window
 
         var runtimeOptions = new SharpEmuRuntimeOptions
         {
-            CpuEngine = CpuExecutionEngine.NativeOnly,
+            CpuEngine = CpuExecutionEngine.Interpreter,
             StrictDynlibResolution = effective.StrictDynlibResolution,
             ImportTraceLimit = Math.Max(0, effective.ImportTraceLimit),
         };

@@ -1059,12 +1059,12 @@ internal static partial class Program
 
         var strictDynlibResolution = false;
         var importTraceLimit = 0;
-        // Android/ARM64 has no native guest-execution path at all (see
-        // CheckHostArchitecture and CpuDispatcher's own Android guard), so it
-        // defaults to the interpreter rather than NativeOnly; an explicit
-        // --cpu-engine=native from a launch Intent is rejected below rather
-        // than silently falling through to DirectExecutionBackend.
-        var cpuEngine = OperatingSystem.IsAndroid() ? CpuExecutionEngine.Interpreter : CpuExecutionEngine.NativeOnly;
+        // The interpreter is the emulator's default CPU backend everywhere, not just on
+        // Android/ARM64 (which has no native guest-execution path at all -- see
+        // CheckHostArchitecture and CpuDispatcher's own Android guard). --cpu-engine=native
+        // remains available as an explicit opt-in on desktop; Android continues to reject it
+        // below rather than silently falling through to DirectExecutionBackend.
+        var cpuEngine = CpuExecutionEngine.Interpreter;
         var interpreterTrace = false;
         var interpreterMaxInstructions = 0;
         HostWindowMode? windowModeOverride = null;

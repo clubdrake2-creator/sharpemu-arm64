@@ -38,7 +38,12 @@ public sealed class X64InterpreterBackend
     // that address â€” this backend is instance-per-guest-thread (see
     // X64InterpreterGuestThreadScheduler), so unlike a shared interpreter
     // instance this cache needs no locking or thread-local storage.
-    private const int DecodeCacheBits = 13;
+    // A real game's hot working set spans far more than one tight loop -- rendering, audio, and
+    // game-logic subsystems each contribute their own hot addresses on the SAME per-thread cache,
+    // so 13 bits (8192 entries) collides often enough to force expensive Iced re-decodes on
+    // addresses that should stay cached. 16 bits (65536 entries, ~4-5MB per guest thread at this
+    // struct's size) trades a modest, one-time memory cost for meaningfully fewer cache misses.
+    private const int DecodeCacheBits = 16;
     private const int DecodeCacheSize = 1 << DecodeCacheBits;
     private readonly DecodeCacheEntry[] _decodeCache = new DecodeCacheEntry[DecodeCacheSize];
 
@@ -48,6 +53,14 @@ public sealed class X64InterpreterBackend
         public ulong Tag;
         public byte[]? Bytes;
         public Instruction Instruction;
+
+        // Set once, at cache-fill time, when the fetched bytes came from a region that cannot be
+        // written by ordinary guest stores (self-modifying code is architecturally impossible
+        // there). A hit against such an entry can skip re-reading/re-validating the guest bytes
+        // entirely for as long as MappingGeneration stays at CachedMappingGeneration -- see
+        // ICpuMemory.MappingGeneration's doc comment for why that pairing is safe.
+        public bool IsNonWritable;
+        public long CachedMappingGeneration;
     }
 
     public X64InterpreterBackend(IModuleManager moduleManager, X64InterpreterGuestThreadScheduler? blockRegistry = null)
@@ -274,6 +287,23 @@ public sealed class X64InterpreterBackend
     {
         instruction = default;
 
+        var slot = (int)((rip * 0x9E3779B97F4A7C15UL) >> (64 - DecodeCacheBits));
+        ref var entry = ref _decodeCache[slot];
+
+        // Fast path: this exact address was cached from a region ordinary guest stores cannot
+        // write to, so self-modifying code is architecturally impossible there -- as long as
+        // nothing anywhere has been mapped/unmapped/reprotected since (MappingGeneration
+        // unchanged), the cached bytes/instruction cannot have gone stale, so this skips the
+        // guest-memory read this method otherwise does on every single execution, hit or miss.
+        // See ICpuMemory.MappingGeneration's doc comment for the full safety argument.
+        if (entry.Valid && entry.Tag == rip && entry.IsNonWritable &&
+            context.Memory.MappingGeneration == entry.CachedMappingGeneration)
+        {
+            instruction = entry.Instruction;
+            bytes = entry.Bytes!;
+            return true;
+        }
+
         // The fresh-bytes read is on the hot path of every single instruction
         // executed (cache hit or miss), so it reads into a stack buffer rather
         // than a freshly heap-allocated array â€” a decode-cache *hit* (the
@@ -291,8 +321,6 @@ public sealed class X64InterpreterBackend
         }
 
         var validBytes = freshBytes[..freshLength];
-        var slot = (int)((rip * 0x9E3779B97F4A7C15UL) >> (64 - DecodeCacheBits));
-        ref var entry = ref _decodeCache[slot];
         if (entry.Valid && entry.Tag == rip && DecodedBytesStillMatch(entry, validBytes))
         {
             instruction = entry.Instruction;
@@ -310,6 +338,8 @@ public sealed class X64InterpreterBackend
         entry.Tag = rip;
         entry.Bytes = bytes;
         entry.Instruction = instruction;
+        entry.IsNonWritable = context.Memory.TryIsRegionNonWritable(rip);
+        entry.CachedMappingGeneration = context.Memory.MappingGeneration;
         return true;
     }
 

@@ -13,7 +13,15 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("VMEM");
 
-    private readonly ReaderWriterLockSlim _gate = new(LockRecursionPolicy.SupportsRecursion);
+    // NoRecursion is meaningfully cheaper per Enter/ExitReadLock pair than SupportsRecursion (no
+    // per-thread owning-count bookkeeping) -- this matters because every single guest memory
+    // access pays it. The one recursive call chain that required SupportsRecursion (Map calling
+    // AllocateAt while already holding the write lock) was fixed by splitting AllocateAt into a
+    // lock-acquiring public form and an AllocateAtLocked form Map calls directly. If another
+    // recursive path exists, NoRecursion throws LockRecursionException immediately and loudly
+    // (as it already did once, caught by the full test suite) rather than silently corrupting
+    // state.
+    private readonly ReaderWriterLockSlim _gate = new(LockRecursionPolicy.NoRecursion);
     private readonly object _guestAllocationGate = new();
     private readonly object _allocationSearchHintGate = new();
     private readonly List<MemoryRegion> _regions = new();
@@ -23,6 +31,20 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     [ThreadStatic]
     private static CommittedRangeCache? _committedRangeCache;
+
+    // Per-guest-thread region hint for the read/write hot path: consecutive memory accesses (stack
+    // locals, struct/array fields, a tight loop's own working set) overwhelmingly stay within the
+    // same mapped region, so checking this single candidate first turns the common case from an
+    // O(log n) binary search over every mapped region into a single bounds check. Thread-local
+    // (not shared) both because each guest thread already runs on its own real host thread with
+    // its own working-set locality (see X64InterpreterGuestThreadScheduler), and to avoid any
+    // cross-thread thrashing where one thread's hint keeps getting evicted by another's unrelated
+    // region. Safe to read/update without extra synchronization beyond the ReaderWriterLockSlim
+    // already held by every caller: a stale hint (region resized/unmapped since cached) simply
+    // fails TryResolveRegionOffset's bounds check like any other candidate and falls back to the
+    // full search, never returning wrong data.
+    [ThreadStatic]
+    private static MemoryRegion? _lastRegionHint;
 
     private long _mappingGeneration;
     private const ulong PageSize = 0x1000;
@@ -315,6 +337,68 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public ulong AllocateAt(ulong desiredAddress, ulong size, bool executable = true, bool allowAlternative = true)
     {
+        var (actualAddress, alignedSize, reservedOnly, protection, lazyPrimeState) =
+            AllocateAtCore(desiredAddress, size, executable, allowAlternative);
+
+        _gate.EnterWriteLock();
+        try
+        {
+            InsertRegionSorted(new MemoryRegion
+            {
+                VirtualAddress = actualAddress,
+                Size = alignedSize,
+                IsExecutable = executable,
+                IsReservedOnly = reservedOnly,
+                Protection = protection
+            });
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        TraceAllocation(actualAddress, alignedSize, reservedOnly, executable, lazyPrimeState);
+        return actualAddress;
+    }
+
+    // Same allocation as the public AllocateAt, for callers (Map) that already hold the write
+    // lock across their whole operation -- skips the redundant recursive Enter/ExitWriteLock pair
+    // the public form needs for standalone callers. Recursive ReaderWriterLockSlim acquisition
+    // requires the (measurably slower on every Enter/ExitReadLock, i.e. every guest memory access)
+    // SupportsRecursion policy; this split is what would let that policy eventually be narrowed to
+    // just the few write-side paths that still need it, or dropped once none do.
+    private ulong AllocateAtLocked(ulong desiredAddress, ulong size, bool executable, bool allowAlternative)
+    {
+        var (actualAddress, alignedSize, reservedOnly, protection, lazyPrimeState) =
+            AllocateAtCore(desiredAddress, size, executable, allowAlternative);
+
+        InsertRegionSorted(new MemoryRegion
+        {
+            VirtualAddress = actualAddress,
+            Size = alignedSize,
+            IsExecutable = executable,
+            IsReservedOnly = reservedOnly,
+            Protection = protection
+        });
+
+        TraceAllocation(actualAddress, alignedSize, reservedOnly, executable, lazyPrimeState);
+        return actualAddress;
+    }
+
+    private void TraceAllocation(ulong actualAddress, ulong alignedSize, bool reservedOnly, bool executable, string lazyPrimeState)
+    {
+        var allocationKind = reservedOnly
+            ? "reserved data memory (lazy commit)"
+            : (executable ? "executable memory" : "data memory");
+        TraceVmem($"Allocated {allocationKind}: 0x{actualAddress:X16} - 0x{actualAddress + alignedSize:X16} ({alignedSize} bytes) lazy_prime={lazyPrimeState}");
+    }
+
+    private (ulong ActualAddress, ulong AlignedSize, bool ReservedOnly, uint Protection, string LazyPrimeState) AllocateAtCore(
+        ulong desiredAddress,
+        ulong size,
+        bool executable,
+        bool allowAlternative)
+    {
         if (size == 0)
             throw new ArgumentOutOfRangeException(nameof(size), "Size must be greater than zero");
 
@@ -372,29 +456,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var actualAddress = result;
         var lazyPrimeState = reservedOnly ? PrimeLazyReserveRegion(actualAddress, alignedSize) : "n/a";
 
-        _gate.EnterWriteLock();
-        try
-        {
-            InsertRegionSorted(new MemoryRegion
-            {
-                VirtualAddress = actualAddress,
-                Size = alignedSize,
-                IsExecutable = executable,
-                IsReservedOnly = reservedOnly,
-                Protection = protection
-            });
-        }
-        finally
-        {
-            _gate.ExitWriteLock();
-        }
-
-        var allocationKind = reservedOnly
-            ? "reserved data memory (lazy commit)"
-            : (executable ? "executable memory" : "data memory");
-        TraceVmem($"Allocated {allocationKind}: 0x{actualAddress:X16} - 0x{actualAddress + alignedSize:X16} ({alignedSize} bytes) lazy_prime={lazyPrimeState}");
-
-        return actualAddress;
+        return (actualAddress, alignedSize, reservedOnly, protection, lazyPrimeState);
     }
 
     /// <summary>
@@ -850,7 +912,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             if (existingRegion == null)
             {
                 var isExecutable = (protection & ProgramHeaderFlags.Execute) != 0;
-                AllocateAt(mapStart, mapSize, isExecutable, allowAlternative: false);
+                AllocateAtLocked(mapStart, mapSize, isExecutable, allowAlternative: false);
             }
 
             var stageProtection = (protection & ProgramHeaderFlags.Execute) != 0
@@ -979,13 +1041,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            var region = FindRegion(virtualAddress, (ulong)destination.Length);
-            if (region is not null &&
-                TryResolveRegionOffset(
-                    virtualAddress,
-                    (ulong)destination.Length,
-                    region,
-                    out var offset))
+            var region = FindRegion(virtualAddress, (ulong)destination.Length, out var offset);
+            if (region is not null)
             {
                 var srcPtr = (void*)(region.VirtualAddress + offset);
                 if (destination.IsEmpty)
@@ -1042,13 +1099,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            var region = FindRegion(virtualAddress, (ulong)expected.Length);
-            if (region is null ||
-                !TryResolveRegionOffset(
-                    virtualAddress,
-                    (ulong)expected.Length,
-                    region,
-                    out var offset))
+            var region = FindRegion(virtualAddress, (ulong)expected.Length, out var offset);
+            if (region is null)
             {
                 return false;
             }
@@ -1093,13 +1145,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            var region = FindRegion(virtualAddress, (ulong)source.Length);
-            if (region is not null &&
-                TryResolveRegionOffset(
-                    virtualAddress,
-                    (ulong)source.Length,
-                    region,
-                    out var offset))
+            var region = FindRegion(virtualAddress, (ulong)source.Length, out var offset);
+            if (region is not null)
             {
                 var destPtr = (void*)(region.VirtualAddress + offset);
                 if (source.IsEmpty)
@@ -1178,11 +1225,9 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            var sourceRegion = FindRegion(sourceAddress, length);
-            var destinationRegion = FindRegion(destinationAddress, length);
-            if (sourceRegion is null || destinationRegion is null ||
-                !TryResolveRegionOffset(sourceAddress, length, sourceRegion, out var sourceOffset) ||
-                !TryResolveRegionOffset(destinationAddress, length, destinationRegion, out var destinationOffset))
+            var sourceRegion = FindRegion(sourceAddress, length, out var sourceOffset);
+            var destinationRegion = FindRegion(destinationAddress, length, out var destinationOffset);
+            if (sourceRegion is null || destinationRegion is null)
             {
                 return false;
             }
@@ -1207,6 +1252,28 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 destinationAddress,
                 new ReadOnlySpan<byte>((void*)destinationPointer, checked((int)length)));
             return true;
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+    }
+
+    public long MappingGeneration => Volatile.Read(ref _mappingGeneration);
+
+    // Lets callers on a genuinely hot per-instruction path (the interpreter's decode cache
+    // validating a cached fetch on every single execution, cache hit or miss) skip re-reading
+    // guest bytes entirely once they've confirmed a region is non-writable, instead of paying this
+    // same lock+lookup cost again on every hit -- see ICpuMemory.MappingGeneration's doc comment
+    // for the safety argument (self-modifying code is impossible on a non-writable page; anything
+    // that changes that fact bumps the generation stamp).
+    public bool TryIsRegionNonWritable(ulong address)
+    {
+        _gate.EnterReadLock();
+        try
+        {
+            var region = FindRegion(address, 1);
+            return region is not null && !CanWriteWithoutProtectionChange(address, 1, region);
         }
         finally
         {
@@ -1372,8 +1439,16 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         }
     }
 
-    private MemoryRegion? FindRegion(ulong address, ulong size)
+    private MemoryRegion? FindRegion(ulong address, ulong size) => FindRegion(address, size, out _);
+
+    private MemoryRegion? FindRegion(ulong address, ulong size, out ulong offset)
     {
+        var hint = _lastRegionHint;
+        if (hint is not null && TryResolveRegionOffset(address, size, hint, out offset))
+        {
+            return hint;
+        }
+
         var low = 0;
         var high = _regions.Count - 1;
         MemoryRegion? candidate = null;
@@ -1392,10 +1467,14 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             }
         }
 
-        return candidate is not null &&
-            TryResolveRegionOffset(address, size, candidate, out _)
-                ? candidate
-                : null;
+        if (candidate is not null && TryResolveRegionOffset(address, size, candidate, out offset))
+        {
+            _lastRegionHint = candidate;
+            return candidate;
+        }
+
+        offset = 0;
+        return null;
     }
 
     private void InsertRegionSorted(MemoryRegion region)
@@ -1523,6 +1602,16 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     private bool CanAccessWithoutProtectionChange(ulong address, ulong size, MemoryRegion region, bool write)
     {
+        // The overwhelmingly common case for ordinary guest heap/stack/code accesses: no per-page
+        // protection override exists anywhere, so every access pays this method's cost as pure
+        // dictionary-lookup overhead for a dictionary that's empty. Skip straight to the
+        // region-level check (below the loop) for the same result without any per-page
+        // Dictionary<ulong,_>.TryGetValue call — this runs on literally every guest memory access.
+        if (_pageProtections.Count == 0)
+        {
+            return write ? IsWritableProtection(region.Protection) : IsReadableProtection(region.Protection);
+        }
+
         var startPage = AlignDown(address, PageSize);
         var endPage = AlignUp(address + size, PageSize);
         for (var pageAddress = startPage; pageAddress < endPage; pageAddress += PageSize)

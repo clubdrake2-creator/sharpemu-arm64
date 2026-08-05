@@ -43,6 +43,10 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
     public bool TryCopy(ulong destinationAddress, ulong sourceAddress, ulong length) =>
         _inner.TryCopy(destinationAddress, sourceAddress, length);
 
+    public long MappingGeneration => _inner.MappingGeneration;
+
+    public bool TryIsRegionNonWritable(ulong address) => _inner.TryIsRegionNonWritable(address);
+
     public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
     {
         if (_inner is IGuestMemoryAllocator allocator)
