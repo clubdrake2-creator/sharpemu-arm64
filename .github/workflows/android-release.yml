@@ -77,18 +77,22 @@ jobs:
           if-no-files-found: error
 
       - name: Create or update release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-v')
         shell: bash
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/android-v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="android-v${APK_VERSION}"
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$APK_NAME" --clobber
           else
             gh release create "$tag" "$APK_NAME" \
               --title "SharpEmu Android ${APK_VERSION}" \
-              --notes "Automated Android proof-of-concept build (${APK_VERSION})."
+              --notes "Automated Android proof-of-concept build (${APK_VERSION})." \
+              --target "$GITHUB_SHA"
           fi
