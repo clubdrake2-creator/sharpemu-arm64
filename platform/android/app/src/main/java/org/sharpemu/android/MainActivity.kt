@@ -2825,7 +2825,7 @@ private fun HomeHeader(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "rpPS4",
+                    text = "SharpEmu",
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -8021,16 +8021,10 @@ private fun DriverChannelsScreen(onBack: () -> Unit) {
 // sheet with selectable list items instead of a free text field. The stored value IS the chosen
 // string (mirrors the desktop combo boxes in settings_dialog_imgui).
 private val selectableSettingOptions: Map<String, List<String>> = mapOf(
-    // Android UI exposes these backends (native side also restricts/normalizes to just these,
-    // see android_app_host.cpp's NormalizeValue) -- "x64-aarch64-asmjit" is shown as "aarch64",
-    // "x64-arm64-backend" as "LLVM", and "x64-aarch64-dynarec" as "Dynarec" in the UI (see
-    // AppUiText.optionLabel).
+    // SharpEmu only implements the x64 interpreter on Android -- no other CPU backend exists in
+    // this build, so the picker only ever has one choice.
     "cpu_backend" to listOf(
-        "auto",
-        "x64-aarch64-asmjit",
-        "x64-arm64-backend",
         "x64-interpreter",
-        "x64-aarch64-dynarec",
     ),
     "fps_overlay_position" to listOf(
         "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right",
@@ -8224,13 +8218,15 @@ private val HiddenGeneralSettingKeys = setOf(
     "shadnet_server",
     "discord_rpc_enabled",
     "big_picture_scale",
-    // CPU section is restricted to just backend choice (cpu_backend) + self-check
-    // (cpu_jit_self_check) -- every other CPU diagnostic/tuning toggle stays available natively
-    // (desktop settings dialog, config file) but isn't surfaced in the Android UI.
+    // CPU section is restricted to just the backend choice (cpu_backend) -- SharpEmu only
+    // implements the x64 interpreter on Android, so every JIT-specific diagnostic/tuning toggle
+    // (self-check, native diagnostics, fallback control, golden corpus, boot turbo) stays
+    // available natively (desktop settings dialog, config file) but isn't surfaced here.
     "cpu_interpreter_trace",
     "cpu_interpreter_max_instructions",
     "cpu_jit_detailed_profile",
     "cpu_jit_deep_debug",
+    "cpu_jit_self_check",
     "cpu_jit_native_diagnostics",
     "cpu_jit_arm64_disallow_fallback",
     "cpu_x64arm64_golden_debug",
@@ -8539,7 +8535,7 @@ private fun settingTitle(setting: SettingEntry, uiText: AppUiText): String =
 // pt-BR description of what each setting does (shown in the per-setting info dialog). Falls back to a
 // generic message for keys without a dedicated explanation.
 private fun settingDescription(key: String): String = when (key) {
-    "cpu_backend" -> "Escolhe o motor de CPU: interpretador x64 (mais compatível) ou JIT AArch64 (mais rápido quando funciona)."
+    "cpu_backend" -> "Motor de CPU usado para executar o código do jogo: interpretador x64."
     "cpu_interpreter_max_instructions" -> "Limite de instruções do interpretador por bloco. 0 = sem limite. Útil para depurar travamentos."
     "cpu_interpreter_trace" -> "Registra cada instrução executada pelo interpretador. Deixa o jogo muito lento; só para depuração."
     "cpu_jit_self_check" -> "Diagnostico legado do JIT. No backend ARM64 normal ele fica desativado para nao trocar para o interpretador. Deixe desligado para velocidade total."
@@ -8988,7 +8984,7 @@ private fun SelectableSettingContent(
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
     val displayValue = if (setting.key == "cpu_backend" && setting.value !in options) {
-        "x64-aarch64-asmjit"
+        "x64-interpreter"
     } else {
         setting.value
     }

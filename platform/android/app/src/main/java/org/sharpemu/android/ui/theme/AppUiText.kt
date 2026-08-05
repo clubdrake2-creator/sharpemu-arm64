@@ -167,10 +167,6 @@ private val CommonOptionLabelsEn = mapOf(
     "Nenhum" to "None",
     "Auto" to "Auto",
     "auto" to "Auto",
-    "x64-aarch64-asmjit" to "aarch64",
-    "x64-arm64-backend" to "LLVM",
-    "x64-aarch64-handjit" to "HandJIT",
-    "x64-aarch64-dynarec" to "Dynarec",
     "x64-interpreter" to "Interpreter",
     "System" to "System",
     "Digital Pad" to "Digital Pad",
@@ -206,10 +202,6 @@ private val CommonOptionLabelsPt = CommonOptionLabelsEn + mapOf(
     "Auto" to "Automático",
     "auto" to "Automático",
 
-    "x64-aarch64-asmjit" to "aarch64",
-    "x64-arm64-backend" to "LLVM",
-    "x64-aarch64-handjit" to "HandJIT",
-    "x64-aarch64-dynarec" to "Dynarec",
     "x64-interpreter" to "Interpretador",
     "Mailbox" to "Mailbox",
     "Fifo" to "FIFO",
@@ -251,10 +243,6 @@ private val CommonOptionLabelsEs = CommonOptionLabelsEn + mapOf(
     "Nenhum" to "Ninguno",
     "Auto" to "Automático",
     "auto" to "Automático",
-    "x64-aarch64-asmjit" to "aarch64",
-    "x64-arm64-backend" to "LLVM",
-    "x64-aarch64-handjit" to "HandJIT",
-    "x64-aarch64-dynarec" to "Dynarec",
     "x64-interpreter" to "Intérprete",
     "Mailbox" to "Mailbox",
     "Fifo" to "FIFO",
@@ -548,7 +536,7 @@ private val SettingTitlesEn = mapOf(
 )
 
 private val SettingDescriptionsEn = mapOf(
-    "cpu_backend" to "Selects the CPU engine used to run game code. ARM64 JIT backends are faster when compatible.",
+    "cpu_backend" to "CPU engine used to run game code: the x64 interpreter.",
     "console_language" to "Console language reported to PS4 games. It affects subtitles, text and voice when supported.",
     "show_splash" to "Shows the game's splash image before the emulator starts rendering gameplay.",
     "connected_to_network" to "Reports to the game that the console is connected to the internet.",
@@ -1678,7 +1666,7 @@ private val PortugueseText = EnglishText.copy(
         "force_texture_bcn_fallback" to "Forçar fallback BCn",
     ) + PolishedSettingTitlesPt,
     settingDescriptions = SettingDescriptionsEn + mapOf(
-        "cpu_backend" to "Escolhe o motor de CPU usado para executar o código do jogo. Backends JIT ARM64 são mais rápidos quando compatíveis.",
+        "cpu_backend" to "Motor de CPU usado para executar o código do jogo: o interpretador x64.",
         "console_language" to "Idioma do console PS4 reportado ao jogo. Afeta legendas, textos e voz quando suportado.",
         "show_splash" to "Mostra a imagem de abertura do jogo antes do emulador renderizar o gameplay.",
         "connected_to_network" to "Reporta ao jogo que o console está conectado à internet.",
@@ -2024,7 +2012,7 @@ private val SpanishText = EnglishText.copy(
         "force_texture_bcn_fallback" to "Forzar fallback BCn",
     ) + PolishedSettingTitlesEs,
     settingDescriptions = SettingDescriptionsEn + mapOf(
-        "cpu_backend" to "Selecciona el motor de CPU usado para ejecutar el código del juego. Los backends JIT ARM64 son más rápidos cuando son compatibles.",
+        "cpu_backend" to "Motor de CPU usado para ejecutar el código del juego: el intérprete x64.",
         "console_language" to "Idioma de consola PS4 reportado al juego. Afecta subtítulos, textos y voces cuando el juego lo soporta.",
         "show_splash" to "Muestra la imagen inicial del juego antes de que el emulador renderice el gameplay.",
         "connected_to_network" to "Indica al juego que la consola está conectada a internet.",
