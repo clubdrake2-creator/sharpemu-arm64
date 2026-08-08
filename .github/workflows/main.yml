@@ -1,0 +1,50 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "sharpemu-arm64" ]
+  pull_request:
+    branches: [ "main", "sharpemu-arm64" ]
+  workflow_dispatch: # Allows you to manually trigger a build from GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x' # Adjust to '9.0.x' if SharpEmu target framework was updated
+
+    - name: Install Android Workload
+      run: |
+        dotnet workload install android
+
+    - name: Setup Java JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Restore Dependencies
+      run: dotnet restore
+
+    - name: Build Android APK (Release)
+      run: |
+        dotnet build platform/android/SharpEmu.Android.csproj \
+          -c Release \
+          -f net8.0-android \
+          -p:AndroidPackageFormat=apk
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SharpEmu-Android-APK
+        path: platform/android/bin/Release/*/*-Signed.apk
+
