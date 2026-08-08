@@ -37,7 +37,7 @@ jobs:
 
     - name: Build Android APK (Release)
       run: |
-        dotnet build platform/android/SharpEmu.Android.csproj \
+        dotnet build **/*.csproj \
           -c Release \
           -f net8.0-android \
           -p:AndroidPackageFormat=apk
